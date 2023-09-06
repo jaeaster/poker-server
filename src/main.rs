@@ -1,12 +1,14 @@
+use dotenv::dotenv;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-mod messages;
 mod server;
 mod storage;
 
 // Main Entry Point
 #[tokio::main]
 async fn main() {
+    dotenv().ok();
+
     // Tracing initialization
     tracing_subscriber::registry()
         .with(
@@ -21,33 +23,52 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use crate::server;
+    use super::*;
     use futures::{sink::SinkExt, stream::StreamExt};
     use serde_json::json;
+    use tokio::net::TcpStream;
+    use tokio_tungstenite::tungstenite::handshake::client::{generate_key, Request};
     use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+    use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
     use tracing::info;
+
+    async fn setup_conn() -> WebSocketStream<MaybeTlsStream<TcpStream>> {
+        let url = "ws://localhost:8080/ws";
+        // Dev environment cookie
+        let cookie = "poker-session-dev=Fe26.2*1*8dc93bbc3f6bebfa3ff420ae8c5c7759a82b37ba3e03cd93230650157f977aa2*iaulAH2srSxJQMYMmHudVQ*tCTDJGo3SSJDbY4T2rdDnb-X6hCDNaRnK-lpOkkviQ1_gnP4ordWDtLi8WTyCcVUGvdNwGSuBx1ReNs2xMb8Z466JyPlmmQvIDApwlTH1qzxkBmph7zK7cVSoR5xvRV_DIGfMsI8fl4ee7XIheMdHA*1695852330243*47e9ef9fb2ed30abc8e30fce62b4a2952ab15a1f40b79e98d80367316ba35ca1*161OhrWK-HSCqpqeYiK5Y40w4IySGPyc7DCHH62ixSk~2";
+
+        let req = Request::builder()
+            .uri(url)
+            .method("GET")
+            .header("Host", url)
+            .header("cookie", cookie)
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header("Sec-WebSocket-Key", generate_key())
+            .body(())
+            .unwrap();
+        let (ws_stream, _) = connect_async(req).await.expect("Failed to connect");
+        ws_stream
+    }
 
     #[tokio::test]
     async fn test_chat() {
+        dotenv().ok();
         // Initialize the tracing subscriber
         let _ = tracing_subscriber::fmt::try_init();
 
         let server_handle = tokio::spawn(server::run());
-
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-        let url = "ws://localhost:8080/ws";
-        let (ws_stream, _) = connect_async(url).await.expect("Failed to connect");
+        let ws_stream = setup_conn().await;
         let (mut write, mut read) = ws_stream.split();
 
         // Create a sample chat message
         let chat_msg = json!({
-            "type": "Room",
-            "id": "room1",
-            "payload": {
-                "type": "Chat",
-                "content": "Hello, world!"
-            }
+            "type": "Chat",
+            "room_id": "room1",
+            "payload": "Hello, world!",
         })
         .to_string();
 

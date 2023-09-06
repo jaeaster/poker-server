@@ -1,5 +1,5 @@
-use crate::messages::*;
-use crate::server::{Context, GlobalState, RoomId};
+use super::messages::*;
+use crate::server::{cookie::Session, ConnectionInfo, Context, GlobalState, RoomId};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -22,6 +22,7 @@ pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<GlobalState>>,
     user_agent: Option<TypedHeader<headers::UserAgent>>,
+    cookies: Option<TypedHeader<headers::Cookie>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
     let user_agent = if let Some(TypedHeader(user_agent)) = user_agent {
@@ -29,24 +30,43 @@ pub async fn ws_handler(
     } else {
         String::from("Unknown browser")
     };
-    tracing::info!("`{}` at {} connected.", user_agent, addr);
 
-    ws.on_upgrade(move |socket| handle_socket(socket, addr, state))
+    tracing::debug!("`{}` at {} connected.", user_agent, addr);
+
+    let cookie_name = std::env::var("POKER_COOKIE_NAME").expect("Missing POKER_COOKIE_NAME");
+    let cookie_secret =
+        std::env::var("POKER_SESSION_SECRET").expect("Missing POKER_SESSION_SECRET");
+
+    let session_cookie = if let Some(TypedHeader(cookies)) = cookies {
+        cookies.get(&cookie_name).unwrap().to_string()
+    } else {
+        String::from("cookie not found")
+    };
+
+    let session = Session::from_cookie(&session_cookie, &cookie_secret).unwrap();
+    let ctx = Context {
+        state,
+        session: Arc::new(session),
+        connection_info: Arc::new(ConnectionInfo {
+            user_agent,
+            ip: addr.to_string(),
+        }),
+    };
+
+    ws.on_upgrade(move |socket| handle_socket(socket, ctx))
 }
 
 /// Actual websocket statemachine (one will be spawned per connection)
-async fn handle_socket(socket: WebSocket, who: SocketAddr, state: Arc<GlobalState>) {
+async fn handle_socket(socket: WebSocket, ctx: Context) {
     let (mut tx, mut rx) = socket.split();
     let (player_send, mut player_recv) = mpsc::unbounded_channel::<String>();
-    let player_id = who.to_string();
 
     // Register channel to send messages to player
-    state.sockets.insert(player_id.clone(), player_send);
-    tracing::info!("Registered socket for {}", &player_id);
+    ctx.state
+        .sockets
+        .insert(ctx.session.address.to_string(), player_send);
 
-    let player_id = Arc::new(player_id);
-
-    let ctx = Context { state, player_id };
+    tracing::debug!("Registered socket for {}", &ctx.session.address);
 
     tokio::spawn(async move {
         loop {
@@ -60,7 +80,7 @@ async fn handle_socket(socket: WebSocket, who: SocketAddr, state: Arc<GlobalStat
 
                             match poker_msg {
                                 PokerMessage::Lobby(msg) => handle_lobby_message(msg, ctx.clone()).await,
-                                PokerMessage::Room(RoomWrapper { id, payload }) => handle_room_message(id, payload, text, ctx.clone()).await,
+                                PokerMessage::Room(RoomWrapper { room_id, payload }) => handle_room_message(room_id, payload, text, ctx.clone()).await,
                             }
                         },
                         _ => unimplemented!()
@@ -81,7 +101,7 @@ async fn handle_room_message(room_id: RoomId, msg: RoomMessage, raw_msg: String,
         .rooms
         .get_mut(&room_id)
         .expect("Not a valid room")
-        .push(ctx.player_id.to_string());
+        .push(ctx.session.address.to_string());
     if let Some(player_ids) = ctx.state.rooms.get(&room_id) {
         match msg {
             RoomMessage::Chat(_) => {

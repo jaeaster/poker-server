@@ -1,8 +1,8 @@
-use super::server::RoomId;
+use super::RoomId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(untagged)]
 pub enum PokerMessage {
     Lobby(LobbyMessage),
     Room(RoomWrapper),
@@ -16,12 +16,14 @@ pub enum LobbyMessage {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RoomWrapper {
-    pub id: RoomId,
+    pub room_id: RoomId,
+
+    #[serde(flatten)]
     pub payload: RoomMessage,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", content = "content")]
+#[serde(tag = "type", content = "payload")]
 pub enum RoomMessage {
     Chat(String),
     GameUpdate(GameEvent),
@@ -29,7 +31,6 @@ pub enum RoomMessage {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
 pub enum GameEvent {
     NewGame,
     DealCards((String, String)),
@@ -45,7 +46,6 @@ pub enum GameEvent {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
 pub enum PlayerEvent {
     Bet(usize),
     Fold,

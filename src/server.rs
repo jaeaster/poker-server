@@ -6,7 +6,11 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 
+use self::cookie::Session;
+
+mod cookie;
 mod handlers;
+mod messages;
 
 pub type RoomId = String;
 pub type PlayerId = String;
@@ -26,7 +30,12 @@ pub struct GlobalState {
 // Arc allows references to be shared across threads/tasks
 pub struct Context {
     state: Arc<GlobalState>,
-    player_id: Arc<PlayerId>,
+    session: Arc<Session>,
+    connection_info: Arc<ConnectionInfo>,
+}
+struct ConnectionInfo {
+    ip: String,
+    user_agent: String,
 }
 
 impl Clone for Context {
@@ -34,7 +43,8 @@ impl Clone for Context {
     fn clone(&self) -> Self {
         Context {
             state: self.state.clone(),
-            player_id: self.player_id.clone(),
+            session: self.session.clone(),
+            connection_info: self.connection_info.clone(),
         }
     }
 }
