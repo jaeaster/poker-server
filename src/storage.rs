@@ -2,7 +2,7 @@ use chashmap::{CHashMap, ReadGuard};
 use std::ops::Deref;
 
 mod models;
-use models::*;
+pub use models::*;
 
 pub trait Storage<'a, T: 'a, P: 'a>
 where

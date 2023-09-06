@@ -1,6 +1,11 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
+
 use dotenv::dotenv;
+use storage::{MemoryStore, Storage, Table};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+mod game;
 mod server;
 mod storage;
 
@@ -18,7 +23,10 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    server::run().await;
+    let storage = MemoryStore::new();
+    let table = Table::default();
+    storage.write_table(table);
+    server::run(storage).await;
 }
 
 #[cfg(test)]
@@ -26,6 +34,7 @@ mod tests {
     use super::*;
     use futures::{sink::SinkExt, stream::StreamExt};
     use serde_json::json;
+    use test_log::test;
     use tokio::net::TcpStream;
     use tokio_tungstenite::tungstenite::handshake::client::{generate_key, Request};
     use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
@@ -52,13 +61,13 @@ mod tests {
         ws_stream
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn test_chat() {
         dotenv().ok();
-        // Initialize the tracing subscriber
-        let _ = tracing_subscriber::fmt::try_init();
-
-        let server_handle = tokio::spawn(server::run());
+        let storage = MemoryStore::new();
+        let table = Table::default();
+        storage.write_table(table);
+        let server_handle = tokio::spawn(server::run(storage));
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
         let ws_stream = setup_conn().await;
