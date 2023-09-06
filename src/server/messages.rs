@@ -11,7 +11,7 @@ pub enum PokerMessage {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum LobbyMessage {
-    Hello,
+    GetTables,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,7 +33,7 @@ pub enum RoomMessage {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum GameEvent {
     NewGame,
-    DealCards((String, String)),
+    DealCards(String, String),
     CommunityCards {
         flop: Vec<String>,
         turn: String,

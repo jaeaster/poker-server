@@ -8,49 +8,15 @@ use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 
 use self::cookie::Session;
 
-mod cookie;
-mod handlers;
-mod messages;
+pub mod context;
+pub mod cookie;
+pub mod handlers;
+pub mod messages;
 
-pub type RoomId = String;
-pub type PlayerId = String;
-type PlayerChannel = mpsc::UnboundedSender<String>;
+pub use context::*;
+pub use cookie::*;
 
-type Room = Vec<PlayerId>;
-type Rooms = CHashMap<RoomId, Room>;
-type Sockets = CHashMap<PlayerId, PlayerChannel>;
-
-// Ensure all state is thread-safe since it will be shared
-pub struct GlobalState {
-    pub sockets: Sockets,
-    pub rooms: Rooms,
-    pub storage: MemoryStore,
-}
-
-// Arc allows references to be shared across threads/tasks
-pub struct Context {
-    state: Arc<GlobalState>,
-    session: Arc<Session>,
-    connection_info: Arc<ConnectionInfo>,
-}
-struct ConnectionInfo {
-    ip: String,
-    user_agent: String,
-}
-
-impl Clone for Context {
-    // Increment reference counters when cloning
-    fn clone(&self) -> Self {
-        Context {
-            state: self.state.clone(),
-            session: self.session.clone(),
-            connection_info: self.connection_info.clone(),
-        }
-    }
-}
-
-pub async fn run() {
-    let storage = MemoryStore::new();
+pub async fn run(storage: MemoryStore) {
     let global_state = GlobalState {
         storage,
         sockets: CHashMap::new(),
