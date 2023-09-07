@@ -2,6 +2,8 @@
 #![allow(unused_variables)]
 
 use dotenv::dotenv;
+use lazy_static::lazy_static;
+use std::env::var;
 use storage::{MemoryStore, Storage, Table};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -9,10 +11,23 @@ mod game;
 mod server;
 mod storage;
 
+lazy_static! {
+    pub static ref COOKIE_NAME: String =
+        var("POKER_COOKIE_NAME").expect("Missing POKER_COOKIE_NAME");
+    pub static ref COOKIE_SECRET: String =
+        var("POKER_SESSION_SECRET").expect("Missing POKER_SESSION_SECRET");
+    pub static ref ENVIRONMENT: String = var("RUST_ENV").expect("Missing RUST_ENV");
+    pub static ref ADDR: &'static str = "0.0.0.0:8080";
+}
+
 // Main Entry Point
 #[tokio::main]
 async fn main() {
     dotenv().ok();
+    // Force loading of env vars
+    let _ = COOKIE_NAME.clone();
+    let _ = COOKIE_SECRET.clone();
+    let _ = ENVIRONMENT.clone();
 
     // Tracing initialization
     tracing_subscriber::registry()
