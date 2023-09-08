@@ -1,22 +1,20 @@
+use super::PlayerId;
 use alloy_primitives::Address;
+use serde::{Deserialize, Serialize};
 
 pub type ChipInt = u64;
+pub type TableId = String;
 
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 pub struct Table {
-    pub id: String,
+    pub id: TableId,
     pub name: String,
     pub min_players: u8,
     pub max_players: u8,
     pub small_blind: ChipInt,
     pub big_blind: ChipInt,
 
-    pub players: Vec<Player>,
-}
-
-pub struct Player {
-    pub id: String,
-    pub username: String,
-    pub chips: ChipInt,
+    pub players: Vec<(PlayerId, ChipInt)>,
 }
 
 impl Table {
@@ -38,22 +36,12 @@ impl Table {
     }
 }
 
-impl Player {
-    pub fn new(id: String, username: String, chips: u64) -> Self {
-        Self {
-            id,
-            username,
-            chips,
-        }
-    }
-}
-
 impl Default for Table {
     fn default() -> Self {
         let player_id = Address::default();
         let mut table = Table::new(69420.to_string(), "Pocket Rocket Dreams".to_string());
         table.players = (0..table.max_players)
-            .map(|_| Player::new(player_id.to_string(), player_id.to_string(), 100))
+            .map(|_| (player_id.to_string(), 100))
             .collect();
         table
     }

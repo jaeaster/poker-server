@@ -1,39 +1,36 @@
-use self::cookie::Session;
-use crate::storage::MemoryStore;
+use super::cookie::Session;
+use crate::{
+    actors::room::{RoomHandle, RoomId},
+    models::Table,
+};
 use axum::{
     extract::{ws::WebSocketUpgrade, ConnectInfo, State},
     response::IntoResponse,
     TypedHeader,
 };
 use axum::{routing::get, Router};
-use chashmap::CHashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use std::{collections::HashMap, net::SocketAddr};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 use tracing::debug;
 
 pub mod context;
 pub mod cookie;
-pub mod handlers;
+pub mod handle_socket;
 pub mod messages;
 
 pub use context::*;
 pub use cookie::*;
-use handlers::handle_socket;
+use handle_socket::handle_socket;
 
-pub async fn run(storage: MemoryStore) {
-    let global_state = GlobalState {
-        storage,
-        sockets: CHashMap::new(),
-        rooms: CHashMap::new(),
-    };
-    global_state.rooms.insert("room1".to_string(), Vec::new());
-    let global_state = Arc::new(global_state);
+pub async fn run() {
+    let table = Table::default();
+    let room = RoomHandle::new(table);
+    let rooms = HashMap::from([(room.id.clone(), room)]);
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
-        .with_state(global_state.clone())
+        .with_state(rooms.clone())
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
@@ -53,7 +50,7 @@ pub async fn run(storage: MemoryStore) {
 /// as well as things from HTTP headers such as user-agent of the browser etc.
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
-    State(state): State<Arc<GlobalState>>,
+    State(rooms): State<HashMap<RoomId, RoomHandle>>,
     user_agent: Option<TypedHeader<headers::UserAgent>>,
     cookies: Option<TypedHeader<headers::Cookie>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -70,11 +67,11 @@ pub async fn ws_handler(
         String::from("cookie not found")
     };
 
-    debug!("`{}` at {} connected.", user_agent, addr);
+    debug!(addr = ?addr, user_agent = user_agent, "New Connection");
 
     let session = Session::from_cookie(&session_cookie, &crate::COOKIE_SECRET).unwrap();
     let ctx = Context {
-        state,
+        rooms,
         session: Arc::new(session),
         connection_info: Arc::new(ConnectionInfo {
             user_agent,

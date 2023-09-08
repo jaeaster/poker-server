@@ -1,18 +1,18 @@
-use crate::storage::{ChipInt, Player};
+use super::{ChipInt, PlayerId};
 use rs_poker::arena::game_state::Round;
 use rs_poker::arena::GameState;
 use rs_poker::core::{FlatDeck, Hand, Rank, Rankable};
 use tracing::debug;
 
 pub struct Game {
-    players: Vec<Player>,
+    players: Vec<PlayerId>,
     pub state: GameState,
     deck: FlatDeck,
 }
 
 impl Game {
     pub fn new(
-        players: Vec<Player>,
+        players: Vec<(PlayerId, ChipInt)>,
         dealer_idx: usize,
         small_blind: ChipInt,
         big_blind: ChipInt,
@@ -31,7 +31,7 @@ impl Game {
         debug!("Players hands: {:?}", &hands);
 
         let mut game_state = GameState::new(
-            players.iter().map(|p| p.chips as i32).collect(),
+            players.iter().map(|(_, chips)| *chips as i32).collect(),
             big_blind as i32,
             small_blind as i32,
             dealer_idx,
@@ -40,7 +40,7 @@ impl Game {
         game_state.hands = hands;
 
         Self {
-            players,
+            players: players.into_iter().map(|(id, _)| id).collect(),
             deck,
             state: game_state,
         }
@@ -125,7 +125,7 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::Table;
+    use crate::models::Table;
     use eyre::Result;
     use test_log::test;
     use tracing::info;
@@ -135,7 +135,7 @@ mod tests {
         let table = Table::default();
         let dealer_idx = 0;
         let mut game = Game::new(
-            table.players,
+            table.players.clone(),
             dealer_idx,
             table.small_blind,
             table.big_blind,

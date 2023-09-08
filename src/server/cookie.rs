@@ -25,8 +25,10 @@ impl Session {
             bail!("Invalid iron cookie format")
         }
     }
+}
 
-    pub fn default() -> Self {
+impl Default for Session {
+    fn default() -> Self {
         Self {
             address: address!("760f35dc48a52320d905b3ef1df7bb29abd4484e"),
         }

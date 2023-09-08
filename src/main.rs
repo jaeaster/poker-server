@@ -4,12 +4,15 @@
 use dotenv::dotenv;
 use lazy_static::lazy_static;
 use std::env::var;
-use storage::{MemoryStore, Storage, Table};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-mod game;
+mod actors;
+mod models;
 mod server;
-mod storage;
+
+pub use actors::*;
+pub use models::*;
+pub use server::*;
 
 lazy_static! {
     pub static ref COOKIE_NAME: String =
@@ -38,17 +41,17 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let storage = MemoryStore::new();
-    let table = Table::default();
-    storage.write_table(table);
-    server::run(storage).await;
+    server::run().await;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::cookie::Session;
+    use crate::server::messages::{
+        LobbyMessage, PokerMessage, RoomMessage, RoomWrapper, ServerMessage,
+    };
     use futures::{sink::SinkExt, stream::StreamExt};
-    use serde_json::json;
     use test_log::test;
     use tokio::net::TcpStream;
     use tokio_tungstenite::tungstenite::handshake::client::{generate_key, Request};
@@ -77,24 +80,52 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_chat() {
+    async fn test_get_lobby_subscribe_chat() {
         dotenv().ok();
-        let storage = MemoryStore::new();
-        let table = Table::default();
-        storage.write_table(table);
-        let server_handle = tokio::spawn(server::run(storage));
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let server_handle = tokio::spawn(server::run());
+        // tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
         let ws_stream = setup_conn().await;
         let (mut write, mut read) = ws_stream.split();
+        let get_tables_msg = PokerMessage::Lobby(LobbyMessage::GetTables);
+        let get_tables_msg = serde_json::to_string(&get_tables_msg).unwrap();
+
+        write
+            .send(Message::Text(get_tables_msg))
+            .await
+            .expect("Failed to send message");
+
+        let tables = if let Some(Ok(Message::Text(msg))) = read.next().await {
+            let msg = serde_json::from_str::<PokerMessage>(&msg).unwrap();
+            if let PokerMessage::ServerResponse(ServerMessage::TableList(tables)) = msg {
+                tables
+            } else {
+                panic!("Received invalid get tables response");
+            }
+        } else {
+            panic!("Didn't receive get tables response");
+        };
+
+        assert_eq!(tables.len(), 1);
+
+        let table = tables.first().unwrap();
+        let subscribe_msg = PokerMessage::Room(RoomWrapper {
+            room_id: table.id.clone(),
+            payload: RoomMessage::Subscribe,
+        });
+        let subscribe_msg = serde_json::to_string(&subscribe_msg).unwrap();
+
+        write
+            .send(Message::Text(subscribe_msg))
+            .await
+            .expect("Failed to send message");
 
         // Create a sample chat message
-        let chat_msg = json!({
-            "type": "Chat",
-            "room_id": "room1",
-            "payload": "Hello, world!",
-        })
-        .to_string();
+        let chat_msg = PokerMessage::Room(RoomWrapper {
+            room_id: table.id.clone(),
+            payload: RoomMessage::Chat("Hello, world!".to_owned()),
+        });
+        let chat_msg = serde_json::to_string(&chat_msg).unwrap();
 
         info!("Sending message to server from client");
         // Send the chat message
@@ -103,13 +134,17 @@ mod tests {
             .await
             .expect("Failed to send message");
 
-        info!("Message sent");
         // Wait for the message to come back
         if let Some(msg) = read.next().await {
             let msg = msg.expect("Failed to read message");
             match msg {
                 Message::Text(text) => {
-                    assert_eq!(text, chat_msg);
+                    let msg = serde_json::from_str::<PokerMessage>(&text).unwrap();
+                    let expected_msg = PokerMessage::ServerResponse(ServerMessage::Chat {
+                        from: Session::default().address.to_string(),
+                        message: "Hello, world!".to_owned(),
+                    });
+                    assert_eq!(msg, expected_msg);
                 }
                 _ => panic!("Received unexpected message type"),
             }
