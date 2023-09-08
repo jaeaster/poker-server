@@ -1,18 +1,13 @@
-use super::cookie::Session;
-use crate::{
-    actors::room::{RoomHandle, RoomId},
-    models::Table,
-};
+use crate::*;
 use axum::{
     extract::{ws::WebSocketUpgrade, ConnectInfo, State},
     response::IntoResponse,
-    TypedHeader,
+    routing::get,
+    Router, TypedHeader,
 };
-use axum::{routing::get, Router};
-use std::sync::Arc;
+use handle_socket::handle_socket;
 use std::{collections::HashMap, net::SocketAddr};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
-use tracing::debug;
 
 pub mod context;
 pub mod cookie;
@@ -21,7 +16,7 @@ pub mod messages;
 
 pub use context::*;
 pub use cookie::*;
-use handle_socket::handle_socket;
+pub use messages::*;
 
 pub async fn run() {
     let table = Table::default();
@@ -72,11 +67,11 @@ pub async fn ws_handler(
     let session = Session::from_cookie(&session_cookie, &crate::COOKIE_SECRET).unwrap();
     let ctx = Context {
         rooms,
-        session: Arc::new(session),
-        connection_info: Arc::new(ConnectionInfo {
+        session,
+        connection_info: ConnectionInfo {
             user_agent,
             ip: addr.to_string(),
-        }),
+        },
     };
 
     ws.on_upgrade(move |socket| handle_socket(socket, ctx))

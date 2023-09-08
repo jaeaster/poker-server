@@ -1088,7 +1088,9 @@ dependencies = [
  "futures-util",
  "hapi-iron-oxide",
  "headers",
+ "hex",
  "lazy_static",
+ "rand 0.8.5",
  "rs_poker",
  "serde",
  "serde_json",
@@ -1310,6 +1312,7 @@ checksum = "e939f05e48b3f4f6c0086e0f0d0e7e0cdf010a86ae5b84aceef4e75846acd268"
 dependencies = [
  "fixedbitset",
  "rand 0.8.5",
+ "serde",
  "thiserror",
 ]
 

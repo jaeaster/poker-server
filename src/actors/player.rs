@@ -1,10 +1,6 @@
-use super::{RoomHandle, RoomId};
-use crate::models::{Player, PlayerId};
-use crate::server::messages::*;
-use eyre::{eyre, Result};
+use crate::*;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
-use tracing::{debug, error};
 
 #[derive(Clone)]
 pub struct PlayerHandle {
@@ -35,11 +31,7 @@ impl PlayerHandle {
 
     pub fn send_error(&self, err: eyre::Error) -> Result<()> {
         debug!(err = ?err, "Responding with error to player");
-        let _ = self
-            .sender
-            .try_send(PokerMessage::ServerResponse(ServerMessage::Error(
-                err.to_string(),
-            )));
+        let _ = self.sender.try_send(PokerMessage::error(err.to_string()));
         Ok(())
     }
 }
@@ -68,33 +60,16 @@ impl PlayerActor {
 
     async fn handle_message(&mut self, poker_msg: PokerMessage) {
         let result: Result<()> = match poker_msg {
-            PokerMessage::Lobby(msg) => {
-                if let Err(e) = self.handle_lobby_message(msg).await {
-                    error!(err = ?e, "Error handling lobby message");
-                }
-                Ok(())
-            }
+            PokerMessage::Lobby(msg) => self.handle_lobby_message(msg).await,
             PokerMessage::Room(RoomWrapper { room_id, payload }) => {
-                if let Err(e) = self.handle_room_message(room_id, payload).await {
-                    error!(err = ?e, "Error handling room message");
-                }
-                Ok(())
+                self.handle_room_message(room_id, payload).await
             }
-            msg @ PokerMessage::ServerResponse(_) => {
-                if let Err(e) = self.socket.try_send(msg) {
-                    error!(err = ?e, "Error sending to socket");
-                }
-                Ok(())
-            }
+            msg @ PokerMessage::ServerResponse(_) => self.send_to_socket(msg),
         };
 
         if let Err(e) = result {
-            error!(err = ?e, "Error handling poker message");
-            let _ = self
-                .socket
-                .try_send(PokerMessage::ServerResponse(ServerMessage::Error(
-                    e.to_string(),
-                )));
+            debug!(err = ?e, "Invalid poker message");
+            let _ = self.send_to_socket(PokerMessage::error(e.to_string()));
         }
     }
 
@@ -121,10 +96,19 @@ impl PlayerActor {
                         }
                     }
                 });
+                Ok(())
+            }
+            RoomMessage::SitTable { chips } => {
+                if chips > self.player.chips {
+                    bail!("Insufficient Chips");
+                }
+                self.player.chips -= chips;
+                let mut table_player = self.player.clone();
+                table_player.chips = chips;
+                room.sit_table(table_player.clone()).await
             }
             _ => unimplemented!(),
         }
-        Ok(())
     }
 
     async fn handle_lobby_message(&self, msg: LobbyMessage) -> Result<()> {
@@ -136,11 +120,16 @@ impl PlayerActor {
                     let table = room.get_table().await;
                     tables.push(table);
                 }
-                let tables_msg = PokerMessage::ServerResponse(ServerMessage::TableList(tables));
-                if let Err(e) = self.socket.try_send(tables_msg) {
-                    error!(e = ?e, "Error sending table message to socket")
-                }
+                let tables_msg = PokerMessage::table_list(tables);
+                let _ = self.send_to_socket(tables_msg);
             }
+        }
+        Ok(())
+    }
+
+    fn send_to_socket(&self, msg: PokerMessage) -> Result<()> {
+        if let Err(e) = self.socket.try_send(msg) {
+            error!(e = ?e, "Error sending table message to socket")
         }
         Ok(())
     }

@@ -1,20 +1,18 @@
-use super::PlayerId;
-use alloy_primitives::Address;
-use serde::{Deserialize, Serialize};
+use crate::*;
 
 pub type ChipInt = u64;
-pub type TableId = String;
+pub type TableId = RoomId;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 pub struct Table {
     pub id: TableId,
     pub name: String,
-    pub min_players: u8,
-    pub max_players: u8,
+    pub min_players: usize,
+    pub max_players: usize,
     pub small_blind: ChipInt,
     pub big_blind: ChipInt,
 
-    pub players: Vec<(PlayerId, ChipInt)>,
+    pub players: Vec<Player>,
 }
 
 impl Table {
@@ -38,11 +36,6 @@ impl Table {
 
 impl Default for Table {
     fn default() -> Self {
-        let player_id = Address::default();
-        let mut table = Table::new(69420.to_string(), "Pocket Rocket Dreams".to_string());
-        table.players = (0..table.max_players)
-            .map(|_| (player_id.to_string(), 100))
-            .collect();
-        table
+        Table::new(69420.to_string(), "Pocket Rocket Dreams".to_string())
     }
 }

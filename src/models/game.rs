@@ -1,18 +1,20 @@
-use super::{ChipInt, PlayerId};
-use rs_poker::arena::game_state::Round;
-use rs_poker::arena::GameState;
+use crate::*;
+use rs_poker::arena::{game_state::Round, GameState};
 use rs_poker::core::{FlatDeck, Hand, Rank, Rankable};
-use tracing::debug;
+
+pub type GameId = TableId;
 
 pub struct Game {
-    players: Vec<PlayerId>,
+    pub id: GameId,
+    pub players: Vec<Player>,
     pub state: GameState,
-    deck: FlatDeck,
+    pub deck: FlatDeck,
 }
 
 impl Game {
     pub fn new(
-        players: Vec<(PlayerId, ChipInt)>,
+        id: GameId,
+        players: Vec<Player>,
         dealer_idx: usize,
         small_blind: ChipInt,
         big_blind: ChipInt,
@@ -31,7 +33,7 @@ impl Game {
         debug!("Players hands: {:?}", &hands);
 
         let mut game_state = GameState::new(
-            players.iter().map(|(_, chips)| *chips as i32).collect(),
+            players.iter().map(|player| player.chips as i32).collect(),
             big_blind as i32,
             small_blind as i32,
             dealer_idx,
@@ -40,7 +42,8 @@ impl Game {
         game_state.hands = hands;
 
         Self {
-            players: players.into_iter().map(|(id, _)| id).collect(),
+            id,
+            players,
             deck,
             state: game_state,
         }
@@ -125,16 +128,18 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::Table;
-    use eyre::Result;
     use test_log::test;
-    use tracing::info;
 
     #[test]
     fn test_game() -> Result<()> {
-        let table = Table::default();
+        let mut table = Table::default();
+        let player_id = Address::default().to_string();
+        let username = player_id.clone();
+        let player = Player::new(player_id, username, *DEFAULT_CHIPS);
+        table.players = (0..table.max_players).map(|_| player.clone()).collect();
         let dealer_idx = 0;
         let mut game = Game::new(
+            table.id,
             table.players.clone(),
             dealer_idx,
             table.small_blind,
@@ -148,7 +153,7 @@ mod tests {
             let round_data = game.state.current_round_data();
             let player_idx = round_data.to_act_idx;
             let bet = game.state.do_bet(game.state.big_blind, false)?;
-            info!("Player at {} bet {}", player_idx, bet);
+            debug!("Player at {} bet {}", player_idx, bet);
 
             if game.is_complete() {
                 game.complete();

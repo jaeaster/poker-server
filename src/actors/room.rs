@@ -1,16 +1,11 @@
-use super::player::PlayerHandle;
-use crate::{
-    models::{ChipInt, Game, PlayerId, Table},
-    server::messages::{PokerMessage, ServerMessage},
-};
+use crate::*;
 use tokio::sync::{broadcast, mpsc, oneshot};
-use tracing::error;
 
 pub type RoomId = String;
 
 #[derive(Clone)]
 pub struct RoomHandle {
-    sender: mpsc::Sender<RoomMessage>,
+    sender: mpsc::Sender<RoomActorMessage>,
     pub id: RoomId,
 }
 
@@ -28,44 +23,44 @@ impl RoomHandle {
 
     pub async fn get_table(&self) -> Table {
         let (send, recv) = oneshot::channel();
-        let msg = RoomMessage::GetTable { respond_to: send };
+        let msg = RoomActorMessage::GetTable { respond_to: send };
         let _ = self.sender.send(msg).await;
         recv.await.expect("Room task has been killed")
     }
 
     pub async fn subscribe(&self) -> broadcast::Receiver<PokerMessage> {
         let (send, recv) = oneshot::channel();
-        let msg = RoomMessage::Subscribe { respond_to: send };
+        let msg = RoomActorMessage::Subscribe { respond_to: send };
         let _ = self.sender.send(msg).await;
         recv.await.expect("Room task has been killed")
     }
 
-    pub async fn sit_table(&mut self, id: PlayerId, chips: ChipInt) -> Table {
+    pub async fn sit_table(&self, player: Player) -> Result<()> {
         let (send, recv) = oneshot::channel();
-        let msg = RoomMessage::SitTable {
-            id,
-            chips,
+        let msg = RoomActorMessage::SitTable {
+            player,
             respond_to: send,
         };
-        let _ = self.sender.send(msg).await;
+        let _ = self.sender.try_send(msg);
         recv.await.expect("Room task has been killed")
     }
 
-    pub fn send_chat_message(&self, message: String, from: PlayerId) {
-        let msg = RoomMessage::Chat { message, from };
+    pub fn send_chat_message(&self, message: String, from: PlayerId) -> Result<()> {
+        let msg = RoomActorMessage::Chat { message, from };
         let _ = self.sender.try_send(msg);
+        Ok(())
     }
 }
 
 struct Room {
-    receiver: mpsc::Receiver<RoomMessage>,
+    receiver: mpsc::Receiver<RoomActorMessage>,
     players: Vec<PlayerHandle>,
     broadcast: broadcast::Sender<PokerMessage>,
     table: Table,
     game: Option<Game>,
 }
 
-enum RoomMessage {
+enum RoomActorMessage {
     GetTable {
         respond_to: oneshot::Sender<Table>,
     },
@@ -74,9 +69,8 @@ enum RoomMessage {
     },
 
     SitTable {
-        id: PlayerId,
-        chips: ChipInt,
-        respond_to: oneshot::Sender<Table>,
+        player: Player,
+        respond_to: oneshot::Sender<Result<()>>,
     },
     Chat {
         from: PlayerId,
@@ -85,7 +79,7 @@ enum RoomMessage {
 }
 
 impl Room {
-    fn new(receiver: mpsc::Receiver<RoomMessage>, table: Table) -> Self {
+    fn new(receiver: mpsc::Receiver<RoomActorMessage>, table: Table) -> Self {
         let (broadcast, _) = broadcast::channel(8);
         Room {
             receiver,
@@ -95,34 +89,75 @@ impl Room {
             players: vec![],
         }
     }
-    fn handle_message(&mut self, msg: RoomMessage) {
+    fn handle_message(&mut self, msg: RoomActorMessage) {
         match msg {
-            RoomMessage::GetTable { respond_to } => {
+            RoomActorMessage::GetTable { respond_to } => {
                 let _ = respond_to.send(self.table.clone());
             }
 
-            RoomMessage::Subscribe { respond_to } => {
+            RoomActorMessage::Subscribe { respond_to } => {
                 let _ = respond_to.send(self.broadcast.subscribe());
             }
 
-            RoomMessage::SitTable {
-                id,
-                chips,
-                respond_to,
-            } => {
-                self.table.players.push((id, chips));
-                let _ = respond_to.send(self.table.clone());
+            RoomActorMessage::SitTable { player, respond_to } => {
+                // TODO: Handle min and max buy-in
+                // TODO: Handle "going south"
+                if self.table.players.len() >= self.table.max_players {
+                    debug!(player = ?player, "Max players at table");
+                    let _ = respond_to.send(Err(eyre!("Table is full")));
+                    return;
+                }
+                if self.table.players.iter().any(|p| p.id == player.id) {
+                    debug!(player = ?player, "Player already sat");
+                    let _ = respond_to.send(Err(eyre!("Already sitting at table")));
+                    return;
+                }
+
+                let sit_table_msg =
+                    PokerMessage::sit_table_broadcast(player.clone(), self.table.players.len());
+                self.table.players.push(player);
+
+                if let Err(e) = self.broadcast.send(sit_table_msg) {
+                    error!(err = ?e, "Error broadcasting sat table");
+                }
+
+                // Start a new game if min_players have sat
+                if self.table.players.len() == self.table.min_players {
+                    if self.game.is_none() {
+                        self.start_new_game()
+                    } else {
+                        panic!("Game should not be in progress!");
+                    }
+                }
+
+                let _ = respond_to.send(Ok(()));
             }
-            RoomMessage::Chat { from, message } => {
-                let broadcast_msg = PokerMessage::ServerResponse(ServerMessage::Chat {
-                    from: from.clone(),
-                    message: message.clone(),
-                });
+            RoomActorMessage::Chat { from, message } => {
+                let broadcast_msg = PokerMessage::chat_broadcast(from, message);
                 if let Err(e) = self.broadcast.send(broadcast_msg) {
                     error!(err = ?e, "Error broadcasting chat message");
                 }
             }
         }
+    }
+
+    fn start_new_game(&mut self) {
+        let mut new_game = Game::new(
+            self.table.id.clone(),
+            self.table.players.clone(),
+            0,
+            self.table.small_blind,
+            self.table.big_blind,
+        );
+        new_game.advance();
+
+        let new_game_msg = PokerMessage::new_game(&self.table.id, &new_game);
+        self.game = Some(new_game);
+
+        if let Err(e) = self.broadcast.send(new_game_msg) {
+            error!(err = ?e, "Error broadcasting new game");
+        }
+        // TODO: Send player's their cards
     }
 }
 

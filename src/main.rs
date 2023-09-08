@@ -11,8 +11,12 @@ mod models;
 mod server;
 
 pub use actors::*;
+pub use alloy_primitives::Address;
+pub use eyre::{bail, eyre, Result};
 pub use models::*;
+pub use serde::{Deserialize, Serialize};
 pub use server::*;
+pub use tracing::{debug, error, info, span};
 
 lazy_static! {
     pub static ref COOKIE_NAME: String =
@@ -21,9 +25,9 @@ lazy_static! {
         var("POKER_SESSION_SECRET").expect("Missing POKER_SESSION_SECRET");
     pub static ref ENVIRONMENT: String = var("RUST_ENV").expect("Missing RUST_ENV");
     pub static ref ADDR: &'static str = "0.0.0.0:8080";
+    pub static ref DEFAULT_CHIPS: ChipInt = 100;
 }
 
-// Main Entry Point
 #[tokio::main]
 async fn main() {
     dotenv().ok();
@@ -48,110 +52,190 @@ async fn main() {
 mod tests {
     use super::*;
     use crate::server::cookie::Session;
-    use crate::server::messages::{
-        LobbyMessage, PokerMessage, RoomMessage, RoomWrapper, ServerMessage,
-    };
+    use crate::server::messages::{PokerMessage, ServerMessage};
     use futures::{sink::SinkExt, stream::StreamExt};
     use test_log::test;
     use tokio::net::TcpStream;
+    use tokio::task::JoinHandle;
     use tokio_tungstenite::tungstenite::handshake::client::{generate_key, Request};
     use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
     use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
-    use tracing::info;
+    use tracing::debug;
 
-    async fn setup_conn() -> WebSocketStream<MaybeTlsStream<TcpStream>> {
-        let url = "ws://localhost:8080/ws";
-        // Dev environment cookie
-        let cookie = "poker-session-dev=Fe26.2*1*8dc93bbc3f6bebfa3ff420ae8c5c7759a82b37ba3e03cd93230650157f977aa2*iaulAH2srSxJQMYMmHudVQ*tCTDJGo3SSJDbY4T2rdDnb-X6hCDNaRnK-lpOkkviQ1_gnP4ordWDtLi8WTyCcVUGvdNwGSuBx1ReNs2xMb8Z466JyPlmmQvIDApwlTH1qzxkBmph7zK7cVSoR5xvRV_DIGfMsI8fl4ee7XIheMdHA*1695852330243*47e9ef9fb2ed30abc8e30fce62b4a2952ab15a1f40b79e98d80367316ba35ca1*161OhrWK-HSCqpqeYiK5Y40w4IySGPyc7DCHH62ixSk~2";
+    fn start_server() -> JoinHandle<()> {
+        tokio::spawn(server::run())
+        // tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
 
-        let req = Request::builder()
-            .uri(url)
-            .method("GET")
-            .header("Host", url)
-            .header("cookie", cookie)
-            .header("Connection", "Upgrade")
-            .header("Upgrade", "websocket")
-            .header("Sec-WebSocket-Version", "13")
-            .header("Sec-WebSocket-Key", generate_key())
-            .body(())
-            .unwrap();
-        let (ws_stream, _) = connect_async(req).await.expect("Failed to connect");
-        ws_stream
+    struct ClientConnection {
+        data: Player,
+        ws_stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
+    }
+
+    impl ClientConnection {
+        async fn setup_conn() -> Self {
+            let url = "ws://localhost:8080/ws";
+            // Dev environment cookie
+            let session = Session::default();
+            let mut cookie = COOKIE_NAME.clone();
+            cookie.push('=');
+            cookie.push_str(&session.to_cookie(&COOKIE_SECRET));
+
+            let req = Request::builder()
+                .uri(url)
+                .method("GET")
+                .header("Host", url)
+                .header("cookie", cookie)
+                .header("Connection", "Upgrade")
+                .header("Upgrade", "websocket")
+                .header("Sec-WebSocket-Version", "13")
+                .header("Sec-WebSocket-Key", generate_key())
+                .body(())
+                .unwrap();
+            let (ws_stream, _) = connect_async(req).await.expect("Failed to connect");
+            Self {
+                data: Player::new(
+                    session.address.to_string(),
+                    session.address.to_string(),
+                    *DEFAULT_CHIPS,
+                ),
+                ws_stream,
+            }
+        }
+
+        async fn get_tables(&mut self) -> Vec<Table> {
+            let get_tables_msg = PokerMessage::get_tables();
+            let get_tables_msg = serde_json::to_string(&get_tables_msg).unwrap();
+
+            debug!("Sending get tables message from client");
+            self.ws_stream
+                .send(Message::Text(get_tables_msg))
+                .await
+                .expect("Failed to send message");
+
+            if let Some(Ok(Message::Text(msg))) = self.ws_stream.next().await {
+                let msg = serde_json::from_str::<PokerMessage>(&msg).unwrap();
+                if let PokerMessage::ServerResponse(ServerMessage::TableList(tables)) = msg {
+                    tables
+                } else {
+                    panic!("Received invalid get tables response");
+                }
+            } else {
+                panic!("Didn't receive get tables response");
+            }
+        }
+
+        async fn subscribe_room(&mut self, room_id: &RoomId) {
+            let subscribe_msg = PokerMessage::subscribe_room(room_id.clone());
+            let subscribe_msg = serde_json::to_string(&subscribe_msg).unwrap();
+
+            debug!("Sending subscribe message from client");
+            self.ws_stream
+                .send(Message::Text(subscribe_msg))
+                .await
+                .expect("Failed to send message");
+        }
+
+        async fn send_chat(&mut self, message: &str, room_id: &RoomId) {
+            let chat_msg = PokerMessage::chat(room_id.clone(), message.to_owned());
+            let chat_msg = serde_json::to_string(&chat_msg).unwrap();
+
+            debug!("Sending chat message from client");
+            self.ws_stream
+                .send(Message::Text(chat_msg))
+                .await
+                .expect("Failed to send message");
+        }
+
+        async fn sit_table(&mut self, chips: ChipInt, room_id: &RoomId) {
+            let sit_msg = PokerMessage::sit_table(room_id.clone(), chips);
+            let sit_msg = serde_json::to_string(&sit_msg).unwrap();
+
+            debug!("Sending sit table from client");
+            self.ws_stream
+                .send(Message::Text(sit_msg))
+                .await
+                .expect("Failed to send message");
+        }
+
+        async fn receive_msg(&mut self, expected_msg: PokerMessage) {
+            if let Some(msg) = self.ws_stream.next().await {
+                let msg = msg.expect("Failed to read message");
+                match msg {
+                    Message::Text(text) => {
+                        let msg = serde_json::from_str::<PokerMessage>(&text).unwrap();
+                        debug!(msg = ?msg);
+                        assert_eq!(msg, expected_msg);
+                    }
+                    _ => panic!("Received unexpected message type"),
+                }
+            } else {
+                panic!("Did not receive a reply");
+            }
+        }
     }
 
     #[test(tokio::test)]
     async fn test_get_lobby_subscribe_chat() {
         dotenv().ok();
-        let server_handle = tokio::spawn(server::run());
-        // tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let server_handle = start_server();
 
-        let ws_stream = setup_conn().await;
-        let (mut write, mut read) = ws_stream.split();
-        let get_tables_msg = PokerMessage::Lobby(LobbyMessage::GetTables);
-        let get_tables_msg = serde_json::to_string(&get_tables_msg).unwrap();
-
-        write
-            .send(Message::Text(get_tables_msg))
-            .await
-            .expect("Failed to send message");
-
-        let tables = if let Some(Ok(Message::Text(msg))) = read.next().await {
-            let msg = serde_json::from_str::<PokerMessage>(&msg).unwrap();
-            if let PokerMessage::ServerResponse(ServerMessage::TableList(tables)) = msg {
-                tables
-            } else {
-                panic!("Received invalid get tables response");
-            }
-        } else {
-            panic!("Didn't receive get tables response");
-        };
-
+        let mut player1 = ClientConnection::setup_conn().await;
+        let tables = player1.get_tables().await;
         assert_eq!(tables.len(), 1);
 
         let table = tables.first().unwrap();
-        let subscribe_msg = PokerMessage::Room(RoomWrapper {
-            room_id: table.id.clone(),
-            payload: RoomMessage::Subscribe,
-        });
-        let subscribe_msg = serde_json::to_string(&subscribe_msg).unwrap();
+        let room_id = table.id.clone();
 
-        write
-            .send(Message::Text(subscribe_msg))
-            .await
-            .expect("Failed to send message");
+        player1.subscribe_room(&room_id).await;
+        player1.send_chat("Hello, World!", &room_id).await;
+        player1
+            .receive_msg(PokerMessage::chat_broadcast(
+                player1.data.id.clone(),
+                "Hello, World!".to_owned(),
+            ))
+            .await;
 
-        // Create a sample chat message
-        let chat_msg = PokerMessage::Room(RoomWrapper {
-            room_id: table.id.clone(),
-            payload: RoomMessage::Chat("Hello, world!".to_owned()),
-        });
-        let chat_msg = serde_json::to_string(&chat_msg).unwrap();
+        let mut player2 = ClientConnection::setup_conn().await;
 
-        info!("Sending message to server from client");
-        // Send the chat message
-        write
-            .send(Message::Text(chat_msg.clone()))
-            .await
-            .expect("Failed to send message");
+        // Chatting
+        player2.subscribe_room(&room_id).await;
+        player2.send_chat("yo", &room_id).await;
+        player1
+            .receive_msg(PokerMessage::chat_broadcast(
+                player2.data.id.clone(),
+                "yo".to_owned(),
+            ))
+            .await;
+        player2
+            .receive_msg(PokerMessage::chat_broadcast(
+                player2.data.id.clone(),
+                "yo".to_owned(),
+            ))
+            .await;
 
-        // Wait for the message to come back
-        if let Some(msg) = read.next().await {
-            let msg = msg.expect("Failed to read message");
-            match msg {
-                Message::Text(text) => {
-                    let msg = serde_json::from_str::<PokerMessage>(&text).unwrap();
-                    let expected_msg = PokerMessage::ServerResponse(ServerMessage::Chat {
-                        from: Session::default().address.to_string(),
-                        message: "Hello, world!".to_owned(),
-                    });
-                    assert_eq!(msg, expected_msg);
-                }
-                _ => panic!("Received unexpected message type"),
-            }
-        } else {
-            panic!("Did not receive a reply");
-        }
+        // Sitting at table
+        player1.sit_table(*DEFAULT_CHIPS + 1, &room_id).await;
+        player1
+            .receive_msg(PokerMessage::error("Insufficient Chips".to_owned()))
+            .await;
 
+        let expected_msg = PokerMessage::sit_table_broadcast(player1.data.clone(), 0);
+        player1.sit_table(*DEFAULT_CHIPS, &room_id).await;
+        player2.receive_msg(expected_msg.clone()).await;
+        player1.receive_msg(expected_msg).await;
+
+        player1.sit_table(1, &room_id).await;
+        player1
+            .receive_msg(PokerMessage::error("Insufficient Chips".to_owned()))
+            .await;
+
+        let expected_msg = PokerMessage::sit_table_broadcast(player2.data.clone(), 1);
+        player2.sit_table(*DEFAULT_CHIPS, &room_id).await;
+        player2.receive_msg(expected_msg.clone()).await;
+        player1.receive_msg(expected_msg).await;
+
+        // let expected_msg = PokerMessage::error("Table is full".to_string());
         server_handle.abort();
     }
 }

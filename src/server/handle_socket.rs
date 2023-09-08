@@ -1,10 +1,7 @@
-use super::messages::*;
-use crate::{actors::player::PlayerHandle, models::Player, server::Context};
+use crate::*;
 use axum::extract::ws::{Message, WebSocket};
 use futures::{sink::SinkExt, stream::StreamExt};
-use serde_json::json;
 use tokio::sync::mpsc;
-use tracing::{debug, error};
 
 /// Actual websocket statemachine (one will be spawned per connection)
 pub async fn handle_socket(socket: WebSocket, ctx: Context) {
@@ -15,12 +12,13 @@ pub async fn handle_socket(socket: WebSocket, ctx: Context) {
         Player::new(
             ctx.session.address.to_string(),
             ctx.session.address.to_string(),
+            *DEFAULT_CHIPS,
         ),
         ctx.rooms,
         player_send.clone(),
     );
 
-    debug!("Registered socket for {}", &ctx.session.address);
+    debug!(id = ?ctx.session.address, "Registered player socket");
 
     tokio::spawn(async move {
         loop {
@@ -39,7 +37,7 @@ pub async fn handle_socket(socket: WebSocket, ctx: Context) {
                                     };
                                 },
                                 Err(_) => {
-                                    let _ = tx.send(Message::Text(json!({"error": "Invalid Message"}).to_string())).await;
+                                    let _ = tx.send(Message::Text(serde_json::to_string(&PokerMessage::error("Invalid Message".to_owned())).unwrap())).await;
                                 },
                             }
 
