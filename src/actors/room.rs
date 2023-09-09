@@ -10,9 +10,9 @@ pub struct RoomHandle {
 }
 
 impl RoomHandle {
-    pub fn new(table: Table) -> Self {
-        let (sender, receiver) = mpsc::channel(8);
-        let room = Room::new(receiver, table.clone());
+    pub fn new(table: Table, player_registry: PlayerRegistryHandle) -> Self {
+        let (sender, receiver) = mpsc::channel(*CHANNEL_SIZE);
+        let room = Room::new(receiver, table.clone(), player_registry);
         tokio::spawn(run(room));
 
         Self {
@@ -54,7 +54,7 @@ impl RoomHandle {
 
 struct Room {
     receiver: mpsc::Receiver<RoomActorMessage>,
-    players: Vec<PlayerHandle>,
+    player_registry: PlayerRegistryHandle,
     broadcast: broadcast::Sender<PokerMessage>,
     table: Table,
     game: Option<Game>,
@@ -79,17 +79,21 @@ enum RoomActorMessage {
 }
 
 impl Room {
-    fn new(receiver: mpsc::Receiver<RoomActorMessage>, table: Table) -> Self {
-        let (broadcast, _) = broadcast::channel(8);
+    fn new(
+        receiver: mpsc::Receiver<RoomActorMessage>,
+        table: Table,
+        player_registry: PlayerRegistryHandle,
+    ) -> Self {
+        let (broadcast, _) = broadcast::channel(*CHANNEL_SIZE);
         Room {
             receiver,
             table,
             broadcast,
+            player_registry,
             game: None,
-            players: vec![],
         }
     }
-    fn handle_message(&mut self, msg: RoomActorMessage) {
+    async fn handle_message(&mut self, msg: RoomActorMessage) {
         match msg {
             RoomActorMessage::GetTable { respond_to } => {
                 let _ = respond_to.send(self.table.clone());
@@ -124,7 +128,7 @@ impl Room {
                 // Start a new game if min_players have sat
                 if self.table.players.len() == self.table.min_players {
                     if self.game.is_none() {
-                        self.start_new_game()
+                        self.start_new_game().await
                     } else {
                         panic!("Game should not be in progress!");
                     }
@@ -141,7 +145,7 @@ impl Room {
         }
     }
 
-    fn start_new_game(&mut self) {
+    async fn start_new_game(&mut self) {
         let mut new_game = Game::new(
             self.table.id.clone(),
             self.table.players.clone(),
@@ -152,17 +156,30 @@ impl Room {
         new_game.advance();
 
         let new_game_msg = PokerMessage::new_game(&self.table.id, &new_game);
-        self.game = Some(new_game);
 
         if let Err(e) = self.broadcast.send(new_game_msg) {
             error!(err = ?e, "Error broadcasting new game");
         }
-        // TODO: Send player's their cards
+        for (player, hand) in self.table.players.iter().zip(new_game.state.hands.clone()) {
+            let deal_hand_msg = PokerMessage::deal_hand(&self.table.id, hand);
+
+            if let Err(e) = self
+                .player_registry
+                .get(player.id.clone())
+                .await
+                .ok_or(eyre!("Player connection closed"))
+                .map(|p| p.send_message(deal_hand_msg))
+            {
+                error!(err = ?e, "Error sending deal hand");
+            }
+        }
+
+        self.game = Some(new_game);
     }
 }
 
 async fn run(mut room: Room) {
     while let Some(msg) = room.receiver.recv().await {
-        room.handle_message(msg);
+        room.handle_message(msg).await;
     }
 }

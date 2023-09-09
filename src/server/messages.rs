@@ -16,7 +16,6 @@ pub enum ServerMessage {
     Chat { from: PlayerId, message: String },
     SitTable { player: Player, index: usize },
     GameUpdate(GameEvent),
-    PlayerAction(PlayerEvent),
     Error(String),
 }
 
@@ -135,10 +134,7 @@ impl PokerMessage {
     }
 
     pub fn deal_hand(room_id: &RoomId, hand: Hand) -> Self {
-        PokerMessage::Room(RoomWrapper {
-            room_id: room_id.clone(),
-            payload: RoomMessage::GameUpdate(GameEvent::DealHand(hand)),
-        })
+        PokerMessage::ServerResponse(ServerMessage::GameUpdate(GameEvent::DealHand(hand)))
     }
 
     pub fn community_cards(

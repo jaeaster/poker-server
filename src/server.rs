@@ -18,14 +18,26 @@ pub use context::*;
 pub use cookie::*;
 pub use messages::*;
 
+#[derive(Clone)]
+pub struct AppState {
+    room_registry: HashMap<RoomId, RoomHandle>,
+    player_registry: PlayerRegistryHandle,
+}
+
 pub async fn run() {
     let table = Table::default();
-    let room = RoomHandle::new(table);
-    let rooms = HashMap::from([(room.id.clone(), room)]);
+    let player_registry = PlayerRegistryHandle::new();
+    let room = RoomHandle::new(table, player_registry.clone());
+    let room_registry = HashMap::from([(room.id.clone(), room)]);
+    // Spawns an actor to manage the player registry
+    let app_state = AppState {
+        room_registry,
+        player_registry,
+    };
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
-        .with_state(rooms.clone())
+        .with_state(app_state)
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
@@ -45,7 +57,7 @@ pub async fn run() {
 /// as well as things from HTTP headers such as user-agent of the browser etc.
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
-    State(rooms): State<HashMap<RoomId, RoomHandle>>,
+    State(app_state): State<AppState>,
     user_agent: Option<TypedHeader<headers::UserAgent>>,
     cookies: Option<TypedHeader<headers::Cookie>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -66,7 +78,6 @@ pub async fn ws_handler(
 
     let session = Session::from_cookie(&session_cookie, &crate::COOKIE_SECRET).unwrap();
     let ctx = Context {
-        rooms,
         session,
         connection_info: ConnectionInfo {
             user_agent,
@@ -74,5 +85,5 @@ pub async fn ws_handler(
         },
     };
 
-    ws.on_upgrade(move |socket| handle_socket(socket, ctx))
+    ws.on_upgrade(move |socket| handle_socket(socket, app_state, ctx))
 }

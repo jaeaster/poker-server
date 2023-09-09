@@ -26,6 +26,7 @@ lazy_static! {
     pub static ref ENVIRONMENT: String = var("RUST_ENV").expect("Missing RUST_ENV");
     pub static ref ADDR: &'static str = "0.0.0.0:8080";
     pub static ref DEFAULT_CHIPS: ChipInt = 100;
+    pub static ref CHANNEL_SIZE: usize = 8;
 }
 
 #[tokio::main]
@@ -173,6 +174,58 @@ mod tests {
                 panic!("Did not receive a reply");
             }
         }
+
+        async fn receive_new_game(&mut self, room_id: &RoomId) {
+            if let Some(msg) = self.ws_stream.next().await {
+                let msg = msg.expect("Failed to read message");
+                match msg {
+                    Message::Text(text) => {
+                        let msg = serde_json::from_str::<PokerMessage>(&text).unwrap();
+                        debug!(msg = ?msg);
+                        assert!(matches!(
+                            msg,
+                            PokerMessage::Room(RoomWrapper {
+                                room_id,
+                                payload: RoomMessage::GameUpdate(GameEvent::NewGame {
+                                    id,
+                                    players,
+                                    dealer_idx,
+                                    stacks,
+                                    bets,
+                                    min_raise,
+                                    bet,
+                                    current_player_idx
+                                })
+                            })
+                        ));
+                    }
+                    _ => panic!("Received unexpected message type"),
+                }
+            } else {
+                panic!("Did not receive a reply");
+            }
+        }
+
+        async fn receive_deal_hand(&mut self, room_id: &RoomId) {
+            if let Some(msg) = self.ws_stream.next().await {
+                let msg = msg.expect("Failed to read message");
+                match msg {
+                    Message::Text(text) => {
+                        let msg = serde_json::from_str::<PokerMessage>(&text).unwrap();
+                        debug!(msg = ?msg);
+                        assert!(matches!(
+                            msg,
+                            PokerMessage::ServerResponse(ServerMessage::GameUpdate(
+                                GameEvent::DealHand(hand)
+                            ))
+                        ));
+                    }
+                    _ => panic!("Received unexpected message type"),
+                }
+            } else {
+                panic!("Did not receive a reply");
+            }
+        }
     }
 
     #[test(tokio::test)]
@@ -234,6 +287,12 @@ mod tests {
         player2.sit_table(*DEFAULT_CHIPS, &room_id).await;
         player2.receive_msg(expected_msg.clone()).await;
         player1.receive_msg(expected_msg).await;
+
+        player1.receive_new_game(&room_id).await;
+        player2.receive_new_game(&room_id).await;
+
+        player1.receive_deal_hand(&room_id).await;
+        player2.receive_deal_hand(&room_id).await;
 
         // let expected_msg = PokerMessage::error("Table is full".to_string());
         server_handle.abort();

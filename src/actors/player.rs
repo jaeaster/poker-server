@@ -4,8 +4,8 @@ use tokio::sync::mpsc;
 
 #[derive(Clone)]
 pub struct PlayerHandle {
-    sender: mpsc::Sender<PokerMessage>,
-    id: PlayerId,
+    pub sender: mpsc::Sender<PokerMessage>,
+    pub id: PlayerId,
 }
 
 impl PlayerHandle {
@@ -14,7 +14,7 @@ impl PlayerHandle {
         rooms: HashMap<RoomId, RoomHandle>,
         socket: mpsc::Sender<PokerMessage>,
     ) -> Self {
-        let (sender, receiver) = mpsc::channel(8);
+        let (sender, receiver) = mpsc::channel(*CHANNEL_SIZE);
         let player_actor = PlayerActor::new(player.clone(), rooms, receiver, socket);
         tokio::spawn(run(player_actor));
 
