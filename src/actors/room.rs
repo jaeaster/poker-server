@@ -161,7 +161,7 @@ impl Room {
     }
 
     fn handle_chat(&mut self, from: String, message: String) -> Result<()> {
-        let broadcast_msg = PokerMessage::chat_broadcast(from, message);
+        let broadcast_msg = PokerMessage::chat_broadcast(self.table.id.clone(), from, message);
         if let Err(e) = self.broadcast.send(broadcast_msg) {
             error!(err = ?e, "Error broadcasting chat message");
         }
@@ -181,8 +181,11 @@ impl Room {
             bail!("Already sitting at table")
         }
 
-        let sit_table_msg =
-            PokerMessage::sit_table_broadcast(player.clone(), self.table.players.len());
+        let sit_table_msg = PokerMessage::sit_table_broadcast(
+            self.table.id.clone(),
+            player.clone(),
+            self.table.players.len(),
+        );
 
         self.table.players.push(player);
 
@@ -212,13 +215,13 @@ impl Room {
         // Advance to preflop and take blinds
         new_game.advance_round();
 
-        let new_game_msg = PokerMessage::new_game(&self.table.id, &new_game);
+        let new_game_msg = PokerMessage::new_game(self.table.id.clone(), &new_game);
 
         if let Err(e) = self.broadcast.send(new_game_msg) {
             error!(err = ?e, "Error broadcasting new game");
         }
         for (player, hand) in self.table.players.iter().zip(new_game.state.hands.clone()) {
-            let deal_hand_msg = PokerMessage::deal_hand(&self.table.id, hand);
+            let deal_hand_msg = PokerMessage::deal_hand(self.table.id.clone(), hand);
 
             if let Err(e) = self.send_to_player(&player.id, deal_hand_msg).await {
                 error!(err = ?e, "Error sending deal hand");
@@ -245,7 +248,7 @@ impl Room {
         let game = self.valid_game_and_turn(&player)?;
         match game.bet(chips) {
             Ok(additional_bet) => {
-                let game_update_msg = PokerMessage::game_update(&room_id, game);
+                let game_update_msg = PokerMessage::game_update(room_id, game);
                 let _ = self.broadcast.send(game_update_msg);
                 Ok(())
             }
@@ -259,7 +262,7 @@ impl Room {
         let room_id = self.table.id.clone();
         let game = self.valid_game_and_turn(&player)?;
         game.fold();
-        let game_update_msg = PokerMessage::game_update(&room_id, game);
+        let game_update_msg = PokerMessage::game_update(room_id, game);
         let _ = self.broadcast.send(game_update_msg);
         Ok(())
     }

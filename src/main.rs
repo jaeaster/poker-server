@@ -52,8 +52,6 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::cookie::Session;
-    use crate::server::messages::{PokerMessage, ServerMessage};
     use futures::{sink::SinkExt, stream::StreamExt};
     use test_log::test;
     use tokio::net::TcpStream;
@@ -66,6 +64,16 @@ mod tests {
     fn start_server() -> JoinHandle<()> {
         tokio::spawn(server::run())
         // tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
+
+    fn pretty_print_json(json_text: &str) -> String {
+        // Parse the string of data into serde_json::Value.
+        let v: serde_json::Value = serde_json::from_str(json_text).unwrap();
+
+        // Convert the serde_json::Value back to a String of pretty-printed JSON text.
+        let pretty_json: String = serde_json::to_string_pretty(&v).unwrap();
+
+        pretty_json
     }
 
     struct ClientConnection {
@@ -112,7 +120,7 @@ mod tests {
 
             if let Some(Ok(Message::Text(msg))) = self.ws_stream.next().await {
                 let msg = serde_json::from_str::<PokerMessage>(&msg).unwrap();
-                if let PokerMessage::ServerResponse(ServerMessage::TableList(tables)) = msg {
+                if let PokerMessage::Server(Either::Lobby(ServerLobby::TableList(tables))) = msg {
                     tables
                 } else {
                     panic!("Received invalid get tables response");
@@ -156,7 +164,7 @@ mod tests {
         }
 
         async fn bet(&mut self, chips: ChipInt, room_id: &RoomId) {
-            let bet_msg = PokerMessage::bet(room_id, chips);
+            let bet_msg = PokerMessage::bet(room_id.clone(), chips);
             let bet_msg = serde_json::to_string(&bet_msg).unwrap();
 
             debug!("Sending bet from client");
@@ -167,7 +175,7 @@ mod tests {
         }
 
         async fn fold(&mut self, room_id: &RoomId) {
-            let fold_msg = PokerMessage::fold(room_id);
+            let fold_msg = PokerMessage::fold(room_id.clone());
             let fold_msg = serde_json::to_string(&fold_msg).unwrap();
 
             debug!("Sending bet from client");
@@ -182,6 +190,8 @@ mod tests {
                 let msg = msg.expect("Failed to read message");
                 match msg {
                     Message::Text(text) => {
+                        let pretty_text = pretty_print_json(&text);
+                        println!("{}", pretty_text);
                         let msg = serde_json::from_str::<PokerMessage>(&text).unwrap();
                         debug!(msg = ?msg);
                         assert_eq!(msg, expected_msg);
@@ -198,26 +208,31 @@ mod tests {
                 let msg = msg.expect("Failed to read message");
                 match msg {
                     Message::Text(text) => {
+                        let pretty_text = pretty_print_json(&text);
+                        println!("{}", pretty_text);
                         let msg = serde_json::from_str::<PokerMessage>(&text).unwrap();
                         debug!(msg = ?msg);
                         assert!(matches!(
                             msg,
-                            PokerMessage::ServerResponse(ServerMessage::GameUpdate(
-                                GameEvent::NewGame(PublicGameState {
-                                    id,
-                                    players,
-                                    dealer_idx,
-                                    community_cards,
-                                    stacks,
-                                    bets,
-                                    min_raise,
-                                    to_call,
-                                    current_player_idx,
-                                    pot,
-                                    game_active_players,
-                                    round_active_players,
-                                })
-                            ))
+                            PokerMessage::Server(Either::Room(ServerRoom {
+                                room_id,
+                                payload: ServerRoomPayload::GameUpdate(GameEvent::NewGame(
+                                    PublicGameState {
+                                        id,
+                                        players,
+                                        dealer_idx,
+                                        current_player_idx,
+                                        game_active_players,
+                                        round_active_players,
+                                        community_cards,
+                                        stacks,
+                                        bets,
+                                        min_raise,
+                                        to_call,
+                                        pot,
+                                    }
+                                ))
+                            }))
                         ));
                     }
                     _ => panic!("Received unexpected message type"),
@@ -232,13 +247,16 @@ mod tests {
                 let msg = msg.expect("Failed to read message");
                 match msg {
                     Message::Text(text) => {
+                        let pretty_text = pretty_print_json(&text);
+                        println!("{}", pretty_text);
                         let msg = serde_json::from_str::<PokerMessage>(&text).unwrap();
                         debug!(msg = ?msg);
                         assert!(matches!(
                             msg,
-                            PokerMessage::ServerResponse(ServerMessage::GameUpdate(
-                                GameEvent::DealHand(hand)
-                            ))
+                            PokerMessage::Server(Either::Room(ServerRoom {
+                                room_id,
+                                payload: ServerRoomPayload::GameUpdate(GameEvent::DealHand(hand))
+                            }))
                         ));
                     }
                     _ => panic!("Received unexpected message type"),
@@ -253,26 +271,31 @@ mod tests {
                 let msg = msg.expect("Failed to read message");
                 match msg {
                     Message::Text(text) => {
+                        let pretty_text = pretty_print_json(&text);
+                        println!("{}", pretty_text);
                         let msg = serde_json::from_str::<PokerMessage>(&text).unwrap();
                         debug!(msg = ?msg);
                         assert!(matches!(
                             msg,
-                            PokerMessage::ServerResponse(ServerMessage::GameUpdate(
-                                GameEvent::StateUpdate(PublicGameState {
-                                    id,
-                                    players,
-                                    dealer_idx,
-                                    current_player_idx,
-                                    game_active_players,
-                                    round_active_players,
-                                    community_cards,
-                                    stacks,
-                                    bets,
-                                    min_raise,
-                                    to_call,
-                                    pot,
-                                })
-                            ))
+                            PokerMessage::Server(Either::Room(ServerRoom {
+                                room_id,
+                                payload: ServerRoomPayload::GameUpdate(GameEvent::StateUpdate(
+                                    PublicGameState {
+                                        id,
+                                        players,
+                                        dealer_idx,
+                                        current_player_idx,
+                                        game_active_players,
+                                        round_active_players,
+                                        community_cards,
+                                        stacks,
+                                        bets,
+                                        min_raise,
+                                        to_call,
+                                        pot,
+                                    }
+                                ))
+                            }))
                         ));
                     }
                     _ => panic!("Received unexpected message type"),
@@ -299,6 +322,7 @@ mod tests {
         player1.send_chat("Hello, World!", &room_id).await;
         player1
             .receive_msg(PokerMessage::chat_broadcast(
+                room_id.clone(),
                 player1.data.id.clone(),
                 "Hello, World!".to_owned(),
             ))
@@ -311,12 +335,14 @@ mod tests {
         player2.send_chat("yo", &room_id).await;
         player1
             .receive_msg(PokerMessage::chat_broadcast(
+                room_id.clone(),
                 player2.data.id.clone(),
                 "yo".to_owned(),
             ))
             .await;
         player2
             .receive_msg(PokerMessage::chat_broadcast(
+                room_id.clone(),
                 player2.data.id.clone(),
                 "yo".to_owned(),
             ))
@@ -325,10 +351,14 @@ mod tests {
         // Sitting at table
         player1.sit_table(*DEFAULT_CHIPS + 1, &room_id).await;
         player1
-            .receive_msg(PokerMessage::error("Insufficient Chips".to_owned()))
+            .receive_msg(PokerMessage::error_room(
+                room_id.clone(),
+                "Insufficient Chips".to_owned(),
+            ))
             .await;
 
-        let expected_msg = PokerMessage::sit_table_broadcast(player1.data.clone(), 0);
+        let expected_msg =
+            PokerMessage::sit_table_broadcast(room_id.clone(), player1.data.clone(), 0);
         player1.sit_table(*DEFAULT_CHIPS, &room_id).await;
         player2.receive_msg(expected_msg.clone()).await;
         player1.receive_msg(expected_msg).await;
@@ -338,7 +368,8 @@ mod tests {
         //     .receive_msg(PokerMessage::error("Insufficient Chips".to_owned()))
         //     .await;
 
-        let expected_msg = PokerMessage::sit_table_broadcast(player2.data.clone(), 1);
+        let expected_msg =
+            PokerMessage::sit_table_broadcast(room_id.clone(), player2.data.clone(), 1);
         player2.sit_table(*DEFAULT_CHIPS, &room_id).await;
         player2.receive_msg(expected_msg.clone()).await;
         player1.receive_msg(expected_msg).await;
@@ -351,7 +382,10 @@ mod tests {
 
         player1.bet(10, &room_id).await;
         player1
-            .receive_msg(PokerMessage::error("Not your turn".to_owned()))
+            .receive_msg(PokerMessage::error_room(
+                room_id.clone(),
+                "Not your turn".to_owned(),
+            ))
             .await;
 
         // Preflop
