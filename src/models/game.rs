@@ -33,7 +33,7 @@ impl Game {
         debug!("Players hands: {:?}", &hands);
 
         let mut game_state = GameState::new(
-            players.iter().map(|player| player.chips as i32).collect(),
+            (0..players.len()).map(|_| *DEFAULT_CHIPS as i32).collect(),
             big_blind as i32,
             small_blind as i32,
             dealer_idx,
@@ -50,14 +50,26 @@ impl Game {
     }
 
     pub fn bet(&mut self, amount: ChipInt) -> Result<i32, rs_poker::arena::errors::GameStateError> {
-        self.state.do_bet(amount as i32, false)
+        let bet = self.state.do_bet(amount as i32, false)?;
+        self.advance();
+        Ok(bet)
     }
 
     pub fn fold(&mut self) {
-        self.state.fold()
+        self.state.fold();
+        self.advance();
     }
 
     pub fn advance(&mut self) {
+        if self.state.current_round_data().player_active.empty() {
+            self.advance_round();
+            if self.is_complete() {
+                self.complete();
+            }
+        }
+    }
+
+    pub fn advance_round(&mut self) {
         self.state.advance_round();
 
         match self.state.round {
@@ -135,7 +147,7 @@ mod tests {
         let mut table = Table::default();
         let player_id = Address::default().to_string();
         let username = player_id.clone();
-        let player = Player::new(player_id, username, *DEFAULT_CHIPS);
+        let player = Player::new(player_id, username);
         table.players = (0..table.max_players).map(|_| player.clone()).collect();
         let dealer_idx = 0;
         let mut game = Game::new(
@@ -147,7 +159,7 @@ mod tests {
         );
 
         // Advance from start -> preflop state and take the blinds
-        game.advance();
+        game.advance_round();
         // First to bet is UTG, everyone calls
         for _ in 0..game.players.len() {
             let round_data = game.state.current_round_data();
@@ -162,7 +174,7 @@ mod tests {
         }
 
         // Preflop -> Flop
-        game.advance();
+        game.advance_round();
 
         // BB first to bet, everyone checks
         for _ in 0..game.players.len() {
@@ -178,7 +190,7 @@ mod tests {
         }
 
         // Flop -> Turn
-        game.advance();
+        game.advance_round();
 
         // Everyone checks
         for _ in 0..game.players.len() {
@@ -194,7 +206,7 @@ mod tests {
         }
 
         // Turn -> River
-        game.advance();
+        game.advance_round();
 
         // Final round of betting, Everyone checks
         for _ in 0..game.players.len() {
@@ -210,7 +222,7 @@ mod tests {
         }
 
         // River -> Showdown
-        game.advance();
+        game.advance_round();
         // Rank hands, determine winner(s), update chips
         // Showdown -> Complete
         game.complete();

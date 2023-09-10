@@ -6,15 +6,10 @@ pub type PlayerId = String;
 pub struct Player {
     pub id: PlayerId,
     pub username: String,
-    pub chips: ChipInt,
 }
 
 impl Player {
-    pub fn new(id: String, username: String, chips: ChipInt) -> Self {
-        Self {
-            id,
-            username,
-            chips,
-        }
+    pub fn new(id: String, username: String) -> Self {
+        Self { id, username }
     }
 }

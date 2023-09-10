@@ -95,11 +95,7 @@ mod tests {
                 .unwrap();
             let (ws_stream, _) = connect_async(req).await.expect("Failed to connect");
             Self {
-                data: Player::new(
-                    session.address.to_string(),
-                    session.address.to_string(),
-                    *DEFAULT_CHIPS,
-                ),
+                data: Player::new(session.address.to_string(), session.address.to_string()),
                 ws_stream,
             }
         }
@@ -159,6 +155,28 @@ mod tests {
                 .expect("Failed to send message");
         }
 
+        async fn bet(&mut self, chips: ChipInt, room_id: &RoomId) {
+            let bet_msg = PokerMessage::bet(room_id, chips);
+            let bet_msg = serde_json::to_string(&bet_msg).unwrap();
+
+            debug!("Sending bet from client");
+            self.ws_stream
+                .send(Message::Text(bet_msg))
+                .await
+                .expect("Failed to send message");
+        }
+
+        async fn fold(&mut self, room_id: &RoomId) {
+            let fold_msg = PokerMessage::fold(room_id);
+            let fold_msg = serde_json::to_string(&fold_msg).unwrap();
+
+            debug!("Sending bet from client");
+            self.ws_stream
+                .send(Message::Text(fold_msg))
+                .await
+                .expect("Failed to send message");
+        }
+
         async fn receive_msg(&mut self, expected_msg: PokerMessage) {
             if let Some(msg) = self.ws_stream.next().await {
                 let msg = msg.expect("Failed to read message");
@@ -184,19 +202,22 @@ mod tests {
                         debug!(msg = ?msg);
                         assert!(matches!(
                             msg,
-                            PokerMessage::Room(RoomWrapper {
-                                room_id,
-                                payload: RoomMessage::GameUpdate(GameEvent::NewGame {
+                            PokerMessage::ServerResponse(ServerMessage::GameUpdate(
+                                GameEvent::NewGame(PublicGameState {
                                     id,
                                     players,
                                     dealer_idx,
+                                    community_cards,
                                     stacks,
                                     bets,
                                     min_raise,
-                                    bet,
-                                    current_player_idx
+                                    to_call,
+                                    current_player_idx,
+                                    pot,
+                                    game_active_players,
+                                    round_active_players,
                                 })
-                            })
+                            ))
                         ));
                     }
                     _ => panic!("Received unexpected message type"),
@@ -217,6 +238,40 @@ mod tests {
                             msg,
                             PokerMessage::ServerResponse(ServerMessage::GameUpdate(
                                 GameEvent::DealHand(hand)
+                            ))
+                        ));
+                    }
+                    _ => panic!("Received unexpected message type"),
+                }
+            } else {
+                panic!("Did not receive a reply");
+            }
+        }
+
+        async fn receive_game_update(&mut self, room_id: &RoomId) {
+            if let Some(msg) = self.ws_stream.next().await {
+                let msg = msg.expect("Failed to read message");
+                match msg {
+                    Message::Text(text) => {
+                        let msg = serde_json::from_str::<PokerMessage>(&text).unwrap();
+                        debug!(msg = ?msg);
+                        assert!(matches!(
+                            msg,
+                            PokerMessage::ServerResponse(ServerMessage::GameUpdate(
+                                GameEvent::StateUpdate(PublicGameState {
+                                    id,
+                                    players,
+                                    dealer_idx,
+                                    current_player_idx,
+                                    game_active_players,
+                                    round_active_players,
+                                    community_cards,
+                                    stacks,
+                                    bets,
+                                    min_raise,
+                                    to_call,
+                                    pot,
+                                })
                             ))
                         ));
                     }
@@ -278,10 +333,10 @@ mod tests {
         player2.receive_msg(expected_msg.clone()).await;
         player1.receive_msg(expected_msg).await;
 
-        player1.sit_table(1, &room_id).await;
-        player1
-            .receive_msg(PokerMessage::error("Insufficient Chips".to_owned()))
-            .await;
+        // player1.sit_table(1, &room_id).await;
+        // player1
+        //     .receive_msg(PokerMessage::error("Insufficient Chips".to_owned()))
+        //     .await;
 
         let expected_msg = PokerMessage::sit_table_broadcast(player2.data.clone(), 1);
         player2.sit_table(*DEFAULT_CHIPS, &room_id).await;
@@ -293,6 +348,47 @@ mod tests {
 
         player1.receive_deal_hand(&room_id).await;
         player2.receive_deal_hand(&room_id).await;
+
+        player1.bet(10, &room_id).await;
+        player1
+            .receive_msg(PokerMessage::error("Not your turn".to_owned()))
+            .await;
+
+        // Preflop
+        player2.bet(2, &room_id).await;
+        player2.receive_game_update(&room_id).await;
+        player1.receive_game_update(&room_id).await;
+
+        player1.bet(2, &room_id).await;
+        player2.receive_game_update(&room_id).await;
+        player1.receive_game_update(&room_id).await;
+
+        // Flop
+        player2.bet(0, &room_id).await;
+        player2.receive_game_update(&room_id).await;
+        player1.receive_game_update(&room_id).await;
+
+        player1.bet(0, &room_id).await;
+        player2.receive_game_update(&room_id).await;
+        player1.receive_game_update(&room_id).await;
+
+        // Turn
+        player2.bet(0, &room_id).await;
+        player2.receive_game_update(&room_id).await;
+        player1.receive_game_update(&room_id).await;
+
+        player1.bet(0, &room_id).await;
+        player2.receive_game_update(&room_id).await;
+        player1.receive_game_update(&room_id).await;
+
+        // River
+        player2.bet(2, &room_id).await;
+        player2.receive_game_update(&room_id).await;
+        player1.receive_game_update(&room_id).await;
+
+        player1.fold(&room_id).await;
+        player2.receive_game_update(&room_id).await;
+        player1.receive_game_update(&room_id).await;
 
         // let expected_msg = PokerMessage::error("Table is full".to_string());
         server_handle.abort();

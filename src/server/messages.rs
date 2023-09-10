@@ -39,22 +39,13 @@ pub enum RoomMessage {
     Subscribe,
     Chat(String),
     SitTable { chips: ChipInt },
-    GameUpdate(GameEvent),
     PlayerAction(PlayerEvent),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 pub enum GameEvent {
-    NewGame {
-        id: GameId,
-        players: Vec<Player>,
-        dealer_idx: usize,
-        stacks: Vec<i32>,
-        bets: Vec<i32>,
-        min_raise: i32,
-        bet: i32,
-        current_player_idx: usize,
-    },
+    NewGame(PublicGameState),
+    StateUpdate(PublicGameState),
     DealHand(Hand),
     CommunityCards {
         flop: (Card, Card, Card),
@@ -65,6 +56,22 @@ pub enum GameEvent {
         winner: PlayerId,
         hand: Hand,
     },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
+pub struct PublicGameState {
+    pub id: GameId,
+    pub players: Vec<Player>,
+    pub dealer_idx: usize,
+    pub game_active_players: Vec<usize>,
+    pub round_active_players: Vec<usize>,
+    pub current_player_idx: usize,
+    pub community_cards: Vec<Card>,
+    pub stacks: Vec<i32>,
+    pub bets: Vec<i32>,
+    pub min_raise: i32,
+    pub to_call: i32,
+    pub pot: i32,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
@@ -118,19 +125,22 @@ impl PokerMessage {
     pub fn new_game(room_id: &RoomId, new_game: &Game) -> Self {
         let state = new_game.state.clone();
         let round = state.current_round_data();
-        PokerMessage::Room(RoomWrapper {
-            room_id: room_id.clone(),
-            payload: RoomMessage::GameUpdate(GameEvent::NewGame {
+        PokerMessage::ServerResponse(ServerMessage::GameUpdate(GameEvent::NewGame(
+            PublicGameState {
                 id: new_game.id.clone(),
                 players: new_game.players.clone(),
                 dealer_idx: state.dealer_idx,
+                community_cards: state.board.clone(),
                 stacks: state.stacks.clone(),
                 bets: round.player_bet.clone(),
                 min_raise: round.min_raise,
-                bet: round.bet,
+                to_call: round.bet,
                 current_player_idx: round.to_act_idx,
-            }),
-        })
+                pot: state.total_pot,
+                game_active_players: state.player_active.ones().collect(),
+                round_active_players: round.player_active.ones().collect(),
+            },
+        )))
     }
 
     pub fn deal_hand(room_id: &RoomId, hand: Hand) -> Self {
@@ -143,9 +153,47 @@ impl PokerMessage {
         turn: Option<Card>,
         river: Option<Card>,
     ) -> Self {
+        PokerMessage::ServerResponse(ServerMessage::GameUpdate(GameEvent::CommunityCards {
+            flop,
+            turn,
+            river,
+        }))
+    }
+
+    pub fn bet(room_id: &RoomId, bet: ChipInt) -> Self {
         PokerMessage::Room(RoomWrapper {
             room_id: room_id.clone(),
-            payload: RoomMessage::GameUpdate(GameEvent::CommunityCards { flop, turn, river }),
+            payload: RoomMessage::PlayerAction(PlayerEvent::Bet(bet)),
         })
+    }
+
+    pub fn fold(room_id: &RoomId) -> Self {
+        PokerMessage::Room(RoomWrapper {
+            room_id: room_id.clone(),
+            payload: RoomMessage::PlayerAction(PlayerEvent::Fold),
+        })
+    }
+
+    pub fn game_update(room_id: &RoomId, game: &Game) -> Self {
+        let game_state = game.state.clone();
+        let current_round = game_state.current_round_data();
+
+        let state_update = PublicGameState {
+            id: game.id.clone(),
+            players: game.players.clone(),
+            dealer_idx: game_state.dealer_idx,
+            community_cards: game_state.board.clone(),
+            min_raise: current_round.min_raise,
+            to_call: current_round.bet,
+            current_player_idx: current_round.to_act_idx,
+            pot: game_state.total_pot,
+            stacks: game_state.stacks.clone(),
+            bets: game_state.player_bet.clone(),
+            game_active_players: game_state.player_active.ones().collect(),
+            round_active_players: current_round.player_active.ones().collect(),
+        };
+        PokerMessage::ServerResponse(ServerMessage::GameUpdate(GameEvent::StateUpdate(
+            state_update,
+        )))
     }
 }

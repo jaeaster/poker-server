@@ -82,7 +82,10 @@ impl PlayerActor {
             .ok_or(eyre!("Not a valid room id"))?;
 
         match msg {
-            RoomMessage::Chat(message) => room.send_chat_message(message, self.player.id.clone()),
+            RoomMessage::Chat(message) => {
+                room.send_chat_message(message, self.player.id.clone())
+                    .await
+            }
             RoomMessage::Subscribe => {
                 let mut subscription = room.subscribe().await;
                 let socket = self.socket.clone();
@@ -99,15 +102,17 @@ impl PlayerActor {
                 Ok(())
             }
             RoomMessage::SitTable { chips } => {
-                if chips > self.player.chips {
+                // TODO: Read chips from smart contract
+                if chips > *DEFAULT_CHIPS {
                     bail!("Insufficient Chips");
                 }
-                self.player.chips -= chips;
-                let mut table_player = self.player.clone();
-                table_player.chips = chips;
-                room.sit_table(table_player.clone()).await
+                let table_player = self.player.clone();
+                room.sit_table(table_player).await
             }
-            _ => unimplemented!(),
+            RoomMessage::PlayerAction(PlayerEvent::Bet(chips)) => {
+                room.bet(self.player.clone(), chips).await
+            }
+            RoomMessage::PlayerAction(PlayerEvent::Fold) => room.fold(self.player.clone()).await,
         }
     }
 

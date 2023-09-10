@@ -15,7 +15,6 @@ pub async fn handle_socket(socket: WebSocket, app_state: AppState, ctx: Context)
         Player::new(
             ctx.session.address.to_string(),
             ctx.session.address.to_string(),
-            *DEFAULT_CHIPS,
         ),
         app_state.room_registry.clone(),
         player_send.clone(),
