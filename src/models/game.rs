@@ -60,6 +60,10 @@ impl Game {
         self.advance();
     }
 
+    pub fn is_over(&self) -> bool {
+        self.state.round == Round::Complete
+    }
+
     pub fn advance(&mut self) {
         if self.state.current_round_data().player_active.empty() {
             self.advance_round();

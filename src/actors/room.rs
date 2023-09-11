@@ -152,10 +152,10 @@ impl Room {
                 chips,
                 respond_to,
             } => {
-                let _ = respond_to.send(self.handle_bet(player, chips));
+                let _ = respond_to.send(self.handle_bet(player, chips).await);
             }
             RoomActorMessage::Fold { player, respond_to } => {
-                let _ = respond_to.send(self.handle_fold(player));
+                let _ = respond_to.send(self.handle_fold(player).await);
             }
         }
     }
@@ -205,10 +205,14 @@ impl Room {
     }
 
     async fn start_new_game(&mut self) {
+        let new_dealer_idx = self.game.as_ref().map_or(0, |game| {
+            game.state.dealer_idx + 1 % self.table.players.len()
+        });
+
         let mut new_game = Game::new(
             self.table.id.clone(),
             self.table.players.clone(),
-            0,
+            new_dealer_idx,
             self.table.small_blind,
             self.table.big_blind,
         );
@@ -243,13 +247,16 @@ impl Room {
         }
     }
 
-    fn handle_bet(&mut self, player: Player, chips: ChipInt) -> Result<()> {
+    async fn handle_bet(&mut self, player: Player, chips: ChipInt) -> Result<()> {
         let room_id = self.table.id.clone();
         let game = self.valid_game_and_turn(&player)?;
         match game.bet(chips) {
             Ok(additional_bet) => {
                 let game_update_msg = PokerMessage::game_update(room_id, game);
                 let _ = self.broadcast.send(game_update_msg);
+                if self.game.as_ref().unwrap().is_over() {
+                    self.start_new_game().await;
+                }
                 Ok(())
             }
             Err(e) => {
@@ -258,12 +265,15 @@ impl Room {
         }
     }
 
-    fn handle_fold(&mut self, player: Player) -> Result<()> {
+    async fn handle_fold(&mut self, player: Player) -> Result<()> {
         let room_id = self.table.id.clone();
         let game = self.valid_game_and_turn(&player)?;
         game.fold();
         let game_update_msg = PokerMessage::game_update(room_id, game);
         let _ = self.broadcast.send(game_update_msg);
+        if self.game.as_ref().unwrap().is_over() {
+            self.start_new_game().await;
+        }
         Ok(())
     }
 

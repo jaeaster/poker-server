@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
+#![feature(assert_matches)]
 
 use dotenv::dotenv;
 use lazy_static::lazy_static;
@@ -53,6 +54,7 @@ async fn main() {
 mod tests {
     use super::*;
     use futures::{sink::SinkExt, stream::StreamExt};
+    use std::assert_matches::assert_matches;
     use test_log::test;
     use tokio::net::TcpStream;
     use tokio::task::JoinHandle;
@@ -203,7 +205,11 @@ mod tests {
             }
         }
 
-        async fn receive_new_game(&mut self, room_id: &RoomId) {
+        async fn receive_new_game(
+            &mut self,
+            expected_room_id: &RoomId,
+            expected_dealer_idx: usize,
+        ) {
             if let Some(msg) = self.ws_stream.next().await {
                 let msg = msg.expect("Failed to read message");
                 match msg {
@@ -212,7 +218,7 @@ mod tests {
                         println!("{}", pretty_text);
                         let msg = serde_json::from_str::<PokerMessage>(&text).unwrap();
                         debug!(msg = ?msg);
-                        assert!(matches!(
+                        assert_matches!(
                             msg,
                             PokerMessage::Server(Either::Room(ServerRoom {
                                 room_id,
@@ -233,7 +239,7 @@ mod tests {
                                     }
                                 ))
                             }))
-                        ));
+                        if *expected_room_id == room_id && expected_dealer_idx == dealer_idx);
                     }
                     _ => panic!("Received unexpected message type"),
                 }
@@ -251,13 +257,13 @@ mod tests {
                         println!("{}", pretty_text);
                         let msg = serde_json::from_str::<PokerMessage>(&text).unwrap();
                         debug!(msg = ?msg);
-                        assert!(matches!(
+                        assert_matches!(
                             msg,
                             PokerMessage::Server(Either::Room(ServerRoom {
-                                room_id,
+                                room_id: received_room_id,
                                 payload: ServerRoomPayload::GameUpdate(GameEvent::DealHand(hand))
                             }))
-                        ));
+                        if *room_id == received_room_id);
                     }
                     _ => panic!("Received unexpected message type"),
                 }
@@ -275,10 +281,11 @@ mod tests {
                         println!("{}", pretty_text);
                         let msg = serde_json::from_str::<PokerMessage>(&text).unwrap();
                         debug!(msg = ?msg);
-                        assert!(matches!(
+                        let five = "5".to_string();
+                        assert_matches!(
                             msg,
                             PokerMessage::Server(Either::Room(ServerRoom {
-                                room_id,
+                                room_id: received_room_id,
                                 payload: ServerRoomPayload::GameUpdate(GameEvent::StateUpdate(
                                     PublicGameState {
                                         id,
@@ -296,7 +303,7 @@ mod tests {
                                     }
                                 ))
                             }))
-                        ));
+                        if *room_id == received_room_id);
                     }
                     _ => panic!("Received unexpected message type"),
                 }
@@ -374,8 +381,8 @@ mod tests {
         player2.receive_msg(expected_msg.clone()).await;
         player1.receive_msg(expected_msg).await;
 
-        player1.receive_new_game(&room_id).await;
-        player2.receive_new_game(&room_id).await;
+        player1.receive_new_game(&room_id, 0).await;
+        player2.receive_new_game(&room_id, 0).await;
 
         player1.receive_deal_hand(&room_id).await;
         player2.receive_deal_hand(&room_id).await;
@@ -420,10 +427,25 @@ mod tests {
         player2.receive_game_update(&room_id).await;
         player1.receive_game_update(&room_id).await;
 
+        // Game ends
         player1.fold(&room_id).await;
         player2.receive_game_update(&room_id).await;
         player1.receive_game_update(&room_id).await;
 
+        // New game starts with dealer idx progressed
+        player2.receive_new_game(&room_id, 1).await;
+        player1.receive_new_game(&room_id, 1).await;
+
+        player1.receive_deal_hand(&room_id).await;
+        player2.receive_deal_hand(&room_id).await;
+
+        player2.bet(10, &room_id).await;
+        player2
+            .receive_msg(PokerMessage::error_room(
+                room_id.clone(),
+                "Not your turn".to_owned(),
+            ))
+            .await;
         // let expected_msg = PokerMessage::error("Table is full".to_string());
         server_handle.abort();
     }
