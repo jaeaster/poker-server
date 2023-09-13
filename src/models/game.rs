@@ -49,6 +49,13 @@ impl Game {
         }
     }
 
+    pub fn current_player(&self) -> Player {
+        self.players
+            .get(self.state.current_round_data().to_act_idx)
+            .expect("Current player should exist")
+            .clone()
+    }
+
     pub fn bet(&mut self, amount: ChipInt) -> Result<i32, rs_poker::arena::errors::GameStateError> {
         let bet = self.state.do_bet(amount as i32, false)?;
         self.advance();
@@ -65,6 +72,13 @@ impl Game {
     }
 
     pub fn advance(&mut self) {
+        // If last action was a fold to end the game, just complete
+        if self.is_complete() {
+            self.complete();
+            return;
+        }
+
+        // If last action ended the betting round, advance then check complete
         if self.state.current_round_data().player_active.empty() {
             self.advance_round();
             if self.is_complete() {

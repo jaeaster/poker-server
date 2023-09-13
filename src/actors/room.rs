@@ -1,5 +1,6 @@
 use crate::*;
 use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::time::{sleep, Duration};
 
 pub type RoomId = String;
 
@@ -89,6 +90,7 @@ struct Room {
     broadcast: broadcast::Sender<PokerMessage>,
     table: Table,
     game: Option<Game>,
+    turn_timer_cancel: Option<mpsc::Sender<()>>,
 }
 
 enum RoomActorMessage {
@@ -134,6 +136,7 @@ impl Room {
             player_registry,
             room_registry,
             game: None,
+            turn_timer_cancel: None,
         }
     }
     async fn handle_message(&mut self, msg: RoomActorMessage) {
@@ -213,7 +216,7 @@ impl Room {
 
     async fn start_new_game(&mut self) {
         let new_dealer_idx = self.game.as_ref().map_or(0, |game| {
-            game.state.dealer_idx + 1 % self.table.players.len()
+            (game.state.dealer_idx + 1) % self.table.players.len()
         });
 
         let mut new_game = Game::new(
@@ -226,6 +229,7 @@ impl Room {
         // Advance to preflop and take blinds
         new_game.advance_round();
 
+        self.run_turn_timer(new_game.current_player()).await;
         let new_game_msg = PokerMessage::new_game(self.table.id.clone(), &new_game);
 
         if let Err(e) = self.broadcast.send(new_game_msg) {
@@ -242,13 +246,12 @@ impl Room {
         self.game = Some(new_game);
     }
 
-    fn valid_game_and_turn(&mut self, player: &Player) -> Result<&mut Game> {
-        if let Some(game) = &mut self.game {
-            let round = game.state.current_round_data();
-            if self.table.players.get(round.to_act_idx).unwrap().id != player.id {
+    fn valid_game_and_turn(&self, player: &Player) -> Result<()> {
+        if let Some(game) = &self.game {
+            if game.current_player().id != player.id {
                 bail!("Not your turn")
             }
-            Ok(game)
+            Ok(())
         } else {
             bail!("Game is not active")
         }
@@ -256,17 +259,18 @@ impl Room {
 
     async fn handle_bet(&mut self, player: Player, chips: ChipInt) -> Result<()> {
         let room_id = self.table.id.clone();
-        let game = self.valid_game_and_turn(&player)?;
+        self.valid_game_and_turn(&player)?;
+        let mut game = self.game.take().unwrap();
         match game.bet(chips) {
             Ok(additional_bet) => {
-                let game_update_msg = PokerMessage::game_update(room_id, game);
+                self.run_turn_timer(game.current_player()).await;
+                let game_update_msg = PokerMessage::game_update(room_id, &game);
                 let _ = self.broadcast.send(game_update_msg);
-                if self.game.as_ref().unwrap().is_over() {
-                    self.start_new_game().await;
-                }
+                self.game = Some(game);
                 Ok(())
             }
             Err(e) => {
+                self.game = Some(game);
                 bail!(e.to_string())
             }
         }
@@ -274,10 +278,16 @@ impl Room {
 
     async fn handle_fold(&mut self, player: Player) -> Result<()> {
         let room_id = self.table.id.clone();
-        let game = self.valid_game_and_turn(&player)?;
+        self.valid_game_and_turn(&player)?;
+        let mut game = self.game.take().unwrap();
         game.fold();
-        let game_update_msg = PokerMessage::game_update(room_id, game);
+
+        self.run_turn_timer(game.current_player()).await;
+        let game_update_msg = PokerMessage::game_update(room_id, &game);
         let _ = self.broadcast.send(game_update_msg);
+
+        self.game = Some(game);
+        debug!(over = self.game.as_ref().unwrap().is_over(), "Game is over");
         if self.game.as_ref().unwrap().is_over() {
             self.start_new_game().await;
         }
@@ -290,6 +300,37 @@ impl Room {
             .await
             .ok_or(eyre!("Player connection closed"))
             .map(|p| p.send_message(msg))?
+    }
+
+    async fn run_turn_timer(&mut self, player: Player) {
+        // Cancel previous timer if exists
+        if let Some(cancel) = self.turn_timer_cancel.as_mut() {
+            let _ = cancel.try_send(());
+        }
+        let duration = Duration::from_secs(*TURN_TIMEOUT); // 30 seconds
+        let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
+        self.turn_timer_cancel = Some(cancel_tx);
+
+        // Get self-referential handle for the timer callback
+        let self_handle = self
+            .room_registry
+            .get(self.table.id.clone())
+            .await
+            .expect("Room should be registered");
+
+        // Run timer
+        tokio::spawn(async move {
+            debug!("Timer running!");
+            tokio::select! {
+                _ = sleep(duration) => {
+                    // Time's up. Send 'fold' message to Room actor.
+                    let _ = self_handle.fold(player).await;
+                },
+                _ = cancel_rx.recv() => {
+                    // Timer was cancelled, do nothing.
+                },
+            }
+        });
     }
 }
 

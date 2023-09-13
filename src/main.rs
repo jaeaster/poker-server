@@ -28,6 +28,7 @@ lazy_static! {
     pub static ref ADDR: &'static str = "0.0.0.0:8080";
     pub static ref DEFAULT_CHIPS: ChipInt = 100;
     pub static ref CHANNEL_SIZE: usize = 8;
+    pub static ref TURN_TIMEOUT: u64 = 30;
 }
 
 #[tokio::main]
@@ -58,6 +59,7 @@ mod tests {
     use test_log::test;
     use tokio::net::TcpStream;
     use tokio::task::JoinHandle;
+    use tokio::time::Duration;
     use tokio_tungstenite::tungstenite::handshake::client::{generate_key, Request};
     use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
     use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
@@ -65,7 +67,6 @@ mod tests {
 
     fn start_server() -> JoinHandle<()> {
         tokio::spawn(server::run())
-        // tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     }
 
     fn pretty_print_json(json_text: &str) -> String {
@@ -441,6 +442,31 @@ mod tests {
 
         player2.bet(10, &room_id).await;
         player2
+            .receive_msg(PokerMessage::error_room(
+                room_id.clone(),
+                "Not your turn".to_owned(),
+            ))
+            .await;
+
+        // Turn timer folds player 1
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(*TURN_TIMEOUT + 1)).await;
+        tokio::time::resume();
+
+        // Receive fold of player 1
+        player1.receive_game_update(&room_id).await;
+        player2.receive_game_update(&room_id).await;
+
+        // New game starts
+        player2.receive_new_game(&room_id, 0).await;
+        player1.receive_new_game(&room_id, 0).await;
+
+        // Cards dealt
+        player1.receive_deal_hand(&room_id).await;
+        player2.receive_deal_hand(&room_id).await;
+
+        player1.bet(10, &room_id).await;
+        player1
             .receive_msg(PokerMessage::error_room(
                 room_id.clone(),
                 "Not your turn".to_owned(),
