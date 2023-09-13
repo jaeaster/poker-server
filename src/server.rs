@@ -6,7 +6,7 @@ use axum::{
     Router, TypedHeader,
 };
 use handle_socket::handle_socket;
-use std::{collections::HashMap, net::SocketAddr};
+use std::net::SocketAddr;
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
 
 pub mod context;
@@ -20,15 +20,16 @@ pub use messages::*;
 
 #[derive(Clone)]
 pub struct AppState {
-    room_registry: HashMap<RoomId, RoomHandle>,
-    player_registry: PlayerRegistryHandle,
+    room_registry: RegistryHandle<RoomId, RoomHandle>,
+    player_registry: RegistryHandle<PlayerId, PlayerHandle>,
 }
 
 pub async fn run() {
     let table = Table::default();
-    let player_registry = PlayerRegistryHandle::new();
-    let room = RoomHandle::new(table, player_registry.clone());
-    let room_registry = HashMap::from([(room.id.clone(), room)]);
+    let player_registry = RegistryHandle::new();
+    let room_registry = RegistryHandle::new();
+    let room = RoomHandle::new(table, player_registry.clone(), room_registry.clone());
+    room_registry.set(room.id.clone(), room).await;
     // Spawns an actor to manage the player registry
     let app_state = AppState {
         room_registry,

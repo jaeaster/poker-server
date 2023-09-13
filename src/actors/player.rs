@@ -1,5 +1,4 @@
 use crate::*;
-use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 #[derive(Clone)]
@@ -11,7 +10,7 @@ pub struct PlayerHandle {
 impl PlayerHandle {
     pub fn new(
         player: Player,
-        rooms: HashMap<RoomId, RoomHandle>,
+        rooms: RegistryHandle<RoomId, RoomHandle>,
         socket: mpsc::Sender<PokerMessage>,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(*CHANNEL_SIZE);
@@ -40,7 +39,7 @@ impl PlayerHandle {
 }
 
 struct PlayerActor {
-    room_registry: HashMap<RoomId, RoomHandle>,
+    room_registry: RegistryHandle<RoomId, RoomHandle>,
     player: Player,
     receiver: mpsc::Receiver<PokerMessage>,
     socket: mpsc::Sender<PokerMessage>,
@@ -49,7 +48,7 @@ struct PlayerActor {
 impl PlayerActor {
     fn new(
         player: Player,
-        rooms: HashMap<RoomId, RoomHandle>,
+        rooms: RegistryHandle<RoomId, RoomHandle>,
         receiver: mpsc::Receiver<PokerMessage>,
         socket: mpsc::Sender<PokerMessage>,
     ) -> Self {
@@ -66,14 +65,12 @@ impl PlayerActor {
             PokerMessage::Client(msg) => match msg {
                 Either::Lobby(lobby_msg) => {
                     if let Err(e) = self.handle_lobby_message(lobby_msg).await {
-                        debug!(err = ?e, "Invalid poker message");
                         self.send_to_socket(PokerMessage::error_lobby(e.to_string()));
                     }
                 }
                 Either::Room(room_msg) => {
                     let room_id = room_msg.room_id.clone();
                     if let Err(e) = self.handle_room_message(room_msg).await {
-                        debug!(err = ?e, "Invalid poker message");
                         self.send_to_socket(PokerMessage::error_room(room_id, e.to_string()))
                     }
                 }
@@ -85,7 +82,7 @@ impl PlayerActor {
     async fn handle_lobby_message(&self, msg: ClientLobby) -> Result<()> {
         match msg {
             ClientLobby::GetTables => {
-                let rooms = self.room_registry.values();
+                let rooms = self.room_registry.get_all().await;
                 let mut tables = vec![];
                 for room in rooms {
                     let table = room.get_table().await;
@@ -106,7 +103,8 @@ impl PlayerActor {
 
         let room = self
             .room_registry
-            .get(&room_id)
+            .get(room_id.clone())
+            .await
             .ok_or(eyre!("Not a valid room id"))?;
 
         match payload {

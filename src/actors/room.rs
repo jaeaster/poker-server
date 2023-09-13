@@ -10,9 +10,13 @@ pub struct RoomHandle {
 }
 
 impl RoomHandle {
-    pub fn new(table: Table, player_registry: PlayerRegistryHandle) -> Self {
+    pub fn new(
+        table: Table,
+        player_registry: RegistryHandle<PlayerId, PlayerHandle>,
+        room_registry: RegistryHandle<RoomId, RoomHandle>,
+    ) -> Self {
         let (sender, receiver) = mpsc::channel(*CHANNEL_SIZE);
-        let room = Room::new(receiver, table.clone(), player_registry);
+        let room = Room::new(receiver, table.clone(), player_registry, room_registry);
         tokio::spawn(run(room));
 
         Self {
@@ -80,7 +84,8 @@ impl RoomHandle {
 
 struct Room {
     receiver: mpsc::Receiver<RoomActorMessage>,
-    player_registry: PlayerRegistryHandle,
+    player_registry: RegistryHandle<PlayerId, PlayerHandle>,
+    room_registry: RegistryHandle<RoomId, RoomHandle>,
     broadcast: broadcast::Sender<PokerMessage>,
     table: Table,
     game: Option<Game>,
@@ -118,7 +123,8 @@ impl Room {
     fn new(
         receiver: mpsc::Receiver<RoomActorMessage>,
         table: Table,
-        player_registry: PlayerRegistryHandle,
+        player_registry: RegistryHandle<PlayerId, PlayerHandle>,
+        room_registry: RegistryHandle<RoomId, RoomHandle>,
     ) -> Self {
         let (broadcast, _) = broadcast::channel(*CHANNEL_SIZE);
         Room {
@@ -126,6 +132,7 @@ impl Room {
             table,
             broadcast,
             player_registry,
+            room_registry,
             game: None,
         }
     }
