@@ -47,7 +47,7 @@ pub enum PlayerEvent {
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 #[serde(tag = "type", content = "payload")]
 pub enum ServerLobby {
-    TableList(Vec<Table>),
+    TableList(Vec<TableConfig>),
     LobbyError(String),
 }
 
@@ -107,12 +107,17 @@ impl PokerMessage {
         let current_round = game_state.current_round_data();
         PublicGameState {
             id: game.id.clone(),
-            players: game.players.clone(),
+            players: game
+                .players
+                .clone()
+                .into_iter()
+                .map(GamePlayer::into)
+                .collect(),
             dealer_idx: game_state.dealer_idx,
             community_cards: game_state.board.clone(),
             min_raise: current_round.min_raise,
-            to_call: current_round.bet,
-            current_player_idx: current_round.to_act_idx,
+            to_call: game.current_bet() as i32,
+            current_player_idx: game.current_player_idx(),
             pot: game_state.total_pot,
             stacks: game_state.stacks.clone(),
             bets: current_round.player_bet.clone(),
@@ -130,7 +135,7 @@ impl PokerMessage {
         Self::Client(Either::Lobby(ClientLobby::GetTables))
     }
 
-    pub fn table_list(tables: Vec<Table>) -> Self {
+    pub fn table_list(tables: Vec<TableConfig>) -> Self {
         Self::Server(Either::Lobby(ServerLobby::TableList(tables)))
     }
 

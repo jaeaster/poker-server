@@ -111,7 +111,7 @@ mod tests {
             }
         }
 
-        async fn get_tables(&mut self) -> Vec<Table> {
+        async fn get_tables(&mut self) -> Vec<TableConfig> {
             let get_tables_msg = PokerMessage::get_tables();
             let get_tables_msg = serde_json::to_string(&get_tables_msg).unwrap();
 

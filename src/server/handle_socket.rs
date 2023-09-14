@@ -9,13 +9,12 @@ use tokio::sync::mpsc;
 pub async fn handle_socket(socket: WebSocket, app_state: AppState, ctx: Context) {
     let (mut tx, mut rx) = socket.split();
     let (player_send, mut player_recv) = mpsc::channel::<PokerMessage>(*CHANNEL_SIZE);
+    let id = ctx.session.address.to_string();
+    let username = ctx.session.address.to_string();
 
     // Spawn new Player actor
     let player = PlayerHandle::new(
-        Player::new(
-            ctx.session.address.to_string(),
-            ctx.session.address.to_string(),
-        ),
+        Player::new(id, username),
         app_state.room_registry.clone(),
         player_send.clone(),
     );

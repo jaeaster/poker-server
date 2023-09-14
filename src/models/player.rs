@@ -13,3 +13,9 @@ impl Player {
         Self { id, username }
     }
 }
+
+impl From<GamePlayer> for Player {
+    fn from(game_player: GamePlayer) -> Self {
+        game_player.info
+    }
+}

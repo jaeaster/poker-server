@@ -4,6 +4,33 @@ use tokio::time::{sleep, Duration};
 
 pub type RoomId = String;
 
+enum RoomActorMessage {
+    GetTable {
+        respond_to: oneshot::Sender<TableConfig>,
+    },
+    Subscribe {
+        respond_to: oneshot::Sender<broadcast::Receiver<PokerMessage>>,
+    },
+    SitTable {
+        player: Player,
+        respond_to: oneshot::Sender<Result<()>>,
+    },
+    Chat {
+        from: PlayerId,
+        message: String,
+        respond_to: oneshot::Sender<Result<()>>,
+    },
+    Bet {
+        player: Player,
+        chips: ChipInt,
+        respond_to: oneshot::Sender<Result<()>>,
+    },
+    Fold {
+        player: Player,
+        respond_to: oneshot::Sender<Result<()>>,
+    },
+}
+
 #[derive(Clone)]
 pub struct RoomHandle {
     sender: mpsc::Sender<RoomActorMessage>,
@@ -17,16 +44,14 @@ impl RoomHandle {
         room_registry: RegistryHandle<RoomId, RoomHandle>,
     ) -> Self {
         let (sender, receiver) = mpsc::channel(*CHANNEL_SIZE);
-        let room = Room::new(receiver, table.clone(), player_registry, room_registry);
+        let id = table.id().clone();
+        let room = Room::new(receiver, table, player_registry, room_registry);
         tokio::spawn(run(room));
 
-        Self {
-            sender,
-            id: table.id,
-        }
+        Self { sender, id }
     }
 
-    pub async fn get_table(&self) -> Table {
+    pub async fn get_table(&self) -> TableConfig {
         let (send, recv) = oneshot::channel();
         let msg = RoomActorMessage::GetTable { respond_to: send };
         let _ = self.sender.send(msg).await;
@@ -89,36 +114,7 @@ struct Room {
     room_registry: RegistryHandle<RoomId, RoomHandle>,
     broadcast: broadcast::Sender<PokerMessage>,
     table: Table,
-    game: Option<Game>,
     turn_timer_cancel: Option<mpsc::Sender<()>>,
-}
-
-enum RoomActorMessage {
-    GetTable {
-        respond_to: oneshot::Sender<Table>,
-    },
-    Subscribe {
-        respond_to: oneshot::Sender<broadcast::Receiver<PokerMessage>>,
-    },
-
-    SitTable {
-        player: Player,
-        respond_to: oneshot::Sender<Result<()>>,
-    },
-    Chat {
-        from: PlayerId,
-        message: String,
-        respond_to: oneshot::Sender<Result<()>>,
-    },
-    Bet {
-        player: Player,
-        chips: ChipInt,
-        respond_to: oneshot::Sender<Result<()>>,
-    },
-    Fold {
-        player: Player,
-        respond_to: oneshot::Sender<Result<()>>,
-    },
 }
 
 impl Room {
@@ -135,14 +131,18 @@ impl Room {
             broadcast,
             player_registry,
             room_registry,
-            game: None,
             turn_timer_cancel: None,
         }
     }
+
+    fn id(&self) -> &RoomId {
+        self.table.id()
+    }
+
     async fn handle_message(&mut self, msg: RoomActorMessage) {
         match msg {
             RoomActorMessage::GetTable { respond_to } => {
-                let _ = respond_to.send(self.table.clone());
+                let _ = respond_to.send(self.table.config.clone());
             }
             RoomActorMessage::Subscribe { respond_to } => {
                 let _ = respond_to.send(self.broadcast.subscribe());
@@ -171,7 +171,7 @@ impl Room {
     }
 
     fn handle_chat(&mut self, from: String, message: String) -> Result<()> {
-        let broadcast_msg = PokerMessage::chat_broadcast(self.table.id.clone(), from, message);
+        let broadcast_msg = PokerMessage::chat_broadcast(self.id().clone(), from, message);
         if let Err(e) = self.broadcast.send(broadcast_msg) {
             error!(err = ?e, "Error broadcasting chat message");
         }
@@ -182,116 +182,102 @@ impl Room {
         // TODO: Handle min and max buy-in
         // TODO: Handle chips from smart contract
         // TODO: Handle "going south"
-        if self.table.players.len() >= self.table.max_players {
+        if self.table.num_players() >= self.table.max_players() {
             debug!(player = ?player, "Max players at table");
             bail!("Table is full")
         }
-        if self.table.players.iter().any(|p| p.id == player.id) {
+        if self.table.players.iter().any(|p| p.info.id == player.id) {
             debug!(player = ?player, "Player already sat");
             bail!("Already sitting at table")
         }
 
         let sit_table_msg = PokerMessage::sit_table_broadcast(
-            self.table.id.clone(),
+            self.table.id().clone(),
             player.clone(),
             self.table.players.len(),
         );
 
-        self.table.players.push(player);
+        self.table.players.push(player.into());
 
         if let Err(e) = self.broadcast.send(sit_table_msg) {
             error!(err = ?e, "Error broadcasting sat table");
         }
 
-        // Start a new game if min_players have sat
-        if self.table.players.len() == self.table.min_players {
-            if self.game.is_none() {
-                self.start_new_game().await
-            } else {
-                panic!("Game should not be in progress!");
-            }
-        }
+        // Try starting a new game, which will fail in most cases
+        let _ = self.try_start_new_game().await;
         Ok(())
     }
 
-    async fn start_new_game(&mut self) {
-        let new_dealer_idx = self.game.as_ref().map_or(0, |game| {
-            (game.state.dealer_idx + 1) % self.table.players.len()
-        });
+    async fn try_start_new_game(&mut self) -> Result<()> {
+        if self.table.game().is_some() && !self.table.game().unwrap().is_over() {
+            bail!("Game is already in progress");
+        }
 
-        let mut new_game = Game::new(
-            self.table.id.clone(),
-            self.table.players.clone(),
-            new_dealer_idx,
-            self.table.small_blind,
-            self.table.big_blind,
-        );
-        // Advance to preflop and take blinds
-        new_game.advance_round();
+        self.table.start_new_game()?;
 
-        self.run_turn_timer(new_game.current_player()).await;
-        let new_game_msg = PokerMessage::new_game(self.table.id.clone(), &new_game);
+        self.run_turn_timer(self.table.current_player().unwrap().clone())
+            .await;
+        let new_game_msg = PokerMessage::new_game(self.id().clone(), self.table.game().unwrap());
 
         if let Err(e) = self.broadcast.send(new_game_msg) {
             error!(err = ?e, "Error broadcasting new game");
         }
-        for (player, hand) in self.table.players.iter().zip(new_game.state.hands.clone()) {
-            let deal_hand_msg = PokerMessage::deal_hand(self.table.id.clone(), hand);
+        for (player, hand) in self.table.game().unwrap().players_hands() {
+            let deal_hand_msg = PokerMessage::deal_hand(self.id().clone(), hand.clone());
 
             if let Err(e) = self.send_to_player(&player.id, deal_hand_msg).await {
                 error!(err = ?e, "Error sending deal hand");
             }
         }
-
-        self.game = Some(new_game);
+        Ok(())
     }
 
-    fn valid_game_and_turn(&self, player: &Player) -> Result<()> {
-        if let Some(game) = &self.game {
-            if game.current_player().id != player.id {
+    async fn handle_bet(&mut self, player: Player, chips: ChipInt) -> Result<()> {
+        let room_id = self.id().clone();
+        if let Some(game) = self.table.game_mut() {
+            if game.is_players_turn(&player) {
+                match game.bet(chips) {
+                    Ok(additional_bet) => {
+                        let game_update_msg = PokerMessage::game_update(room_id, game);
+                        let _ = self.broadcast.send(game_update_msg);
+                        self.run_turn_timer(player).await;
+                        Ok(())
+                    }
+                    Err(e) => {
+                        bail!(e.to_string())
+                    }
+                }
+            } else {
                 bail!("Not your turn")
             }
-            Ok(())
         } else {
             bail!("Game is not active")
         }
     }
 
-    async fn handle_bet(&mut self, player: Player, chips: ChipInt) -> Result<()> {
-        let room_id = self.table.id.clone();
-        self.valid_game_and_turn(&player)?;
-        let mut game = self.game.take().unwrap();
-        match game.bet(chips) {
-            Ok(additional_bet) => {
-                self.run_turn_timer(game.current_player()).await;
-                let game_update_msg = PokerMessage::game_update(room_id, &game);
-                let _ = self.broadcast.send(game_update_msg);
-                self.game = Some(game);
-                Ok(())
-            }
-            Err(e) => {
-                self.game = Some(game);
-                bail!(e.to_string())
-            }
-        }
-    }
-
     async fn handle_fold(&mut self, player: Player) -> Result<()> {
-        let room_id = self.table.id.clone();
-        self.valid_game_and_turn(&player)?;
-        let mut game = self.game.take().unwrap();
-        game.fold();
+        let room_id = self.id().clone();
+        if let Some(game) = self.table.game_mut() {
+            if game.is_players_turn(&player) {
+                game.fold();
+                let game_update_msg = PokerMessage::game_update(room_id, game);
+                let _ = self.broadcast.send(game_update_msg);
 
-        self.run_turn_timer(game.current_player()).await;
-        let game_update_msg = PokerMessage::game_update(room_id, &game);
-        let _ = self.broadcast.send(game_update_msg);
+                if game.is_over() {
+                    // Try starting a new game
+                    // This fails if not enough players for the next game
+                    let _ = self.try_start_new_game().await;
+                } else {
+                    self.run_turn_timer(player).await;
+                }
 
-        self.game = Some(game);
-        debug!(over = self.game.as_ref().unwrap().is_over(), "Game is over");
-        if self.game.as_ref().unwrap().is_over() {
-            self.start_new_game().await;
+                Ok(())
+            } else {
+                bail!("Not your turn")
+            }
+        } else {
+            bail!("Game is not active")
         }
-        Ok(())
     }
 
     async fn send_to_player(&self, id: &PlayerId, msg: PokerMessage) -> Result<()> {
@@ -304,7 +290,7 @@ impl Room {
 
     async fn run_turn_timer(&mut self, player: Player) {
         // Cancel previous timer if exists
-        if let Some(cancel) = self.turn_timer_cancel.as_mut() {
+        if let Some(cancel) = self.turn_timer_cancel.clone() {
             let _ = cancel.try_send(());
         }
         let duration = Duration::from_secs(*TURN_TIMEOUT); // 30 seconds
@@ -314,7 +300,7 @@ impl Room {
         // Get self-referential handle for the timer callback
         let self_handle = self
             .room_registry
-            .get(self.table.id.clone())
+            .get(self.id().clone())
             .await
             .expect("Room should be registered");
 

@@ -4,17 +4,47 @@ use rs_poker::core::{FlatDeck, Hand, Rank, Rankable};
 
 pub type GameId = TableId;
 
+#[derive(Debug)]
 pub struct Game {
     pub id: GameId,
-    pub players: Vec<Player>,
+    pub players: Vec<GamePlayer>,
     pub state: GameState,
     pub deck: FlatDeck,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GamePlayer {
+    pub info: Player,
+    check_fold: bool,
+    call_any: bool,
+}
+
+impl GamePlayer {
+    fn new(player: Player) -> Self {
+        Self {
+            info: player,
+            check_fold: false,
+            call_any: false,
+        }
+    }
+}
+
+impl From<Player> for GamePlayer {
+    fn from(player: Player) -> Self {
+        Self::new(player)
+    }
+}
+
+impl From<TablePlayer> for GamePlayer {
+    fn from(player: TablePlayer) -> Self {
+        Self::new(player.info)
+    }
 }
 
 impl Game {
     pub fn new(
         id: GameId,
-        players: Vec<Player>,
+        players: Vec<GamePlayer>,
         dealer_idx: usize,
         small_blind: ChipInt,
         big_blind: ChipInt,
@@ -41,19 +71,48 @@ impl Game {
 
         game_state.hands = hands;
 
-        Self {
+        let mut new_game = Self {
             id,
             players,
             deck,
             state: game_state,
-        }
+        };
+
+        // Advance to preflop and take blinds
+        new_game.advance_round();
+        new_game
     }
 
-    pub fn current_player(&self) -> Player {
+    pub fn players_hands(&self) -> Vec<(&Player, &Hand)> {
         self.players
-            .get(self.state.current_round_data().to_act_idx)
+            .iter()
+            .map(|p| &p.info)
+            .zip(self.state.hands.iter())
+            .collect()
+    }
+
+    pub fn current_player_idx(&self) -> usize {
+        self.state.current_round_data().to_act_idx
+    }
+
+    pub fn current_player(&self) -> &Player {
+        &self
+            .players
+            .get(self.current_player_idx())
             .expect("Current player should exist")
-            .clone()
+            .info
+    }
+
+    pub fn is_players_turn(&self, player: &Player) -> bool {
+        self.current_player().id == player.id
+    }
+
+    pub fn current_bet(&self) -> ChipInt {
+        self.state.current_round_data().bet as ChipInt
+    }
+
+    pub fn players_bet(&self, player_idx: usize) -> ChipInt {
+        self.state.current_round_data().player_bet[player_idx] as ChipInt
     }
 
     pub fn bet(&mut self, amount: ChipInt) -> Result<i32, rs_poker::arena::errors::GameStateError> {
@@ -71,10 +130,48 @@ impl Game {
         self.state.round == Round::Complete
     }
 
-    pub fn advance(&mut self) {
+    fn check_fold(&mut self) {
+        if self.players_bet(self.current_player_idx()) == self.current_bet() {
+            self.bet(self.current_bet())
+                .expect("Check / Fold should work");
+        } else {
+            self.fold();
+        }
+    }
+
+    fn call_any(&mut self) {
+        let current_bet = self.current_bet() as i32;
+        self.bet(current_bet as ChipInt)
+            .expect("Call any should be valid");
+    }
+
+    fn advance(&mut self) {
         // If last action was a fold to end the game, just complete
         if self.is_complete() {
             self.complete();
+            return;
+        }
+
+        // Check if next player has an auto-action and execute it
+        // This will make a recursive call back to this advance() function, therefore we return
+        let current_player_idx = self.current_player_idx();
+        if self
+            .players
+            .get(current_player_idx)
+            .expect("Current player should exist")
+            .check_fold
+        {
+            self.check_fold();
+            return;
+        }
+
+        if self
+            .players
+            .get(current_player_idx)
+            .expect("Current player should exist")
+            .call_any
+        {
+            self.call_any();
             return;
         }
 
@@ -87,7 +184,7 @@ impl Game {
         }
     }
 
-    pub fn advance_round(&mut self) {
+    fn advance_round(&mut self) {
         self.state.advance_round();
 
         match self.state.round {
@@ -104,11 +201,11 @@ impl Game {
         }
     }
 
-    pub fn is_complete(&self) -> bool {
+    fn is_complete(&self) -> bool {
         self.state.is_complete()
     }
 
-    pub fn complete(&mut self) {
+    fn complete(&mut self) {
         self.state.complete();
         match self.state.num_active_players() {
             0 => panic!("No active players when game is complete"),
@@ -166,14 +263,21 @@ mod tests {
         let player_id = Address::default().to_string();
         let username = player_id.clone();
         let player = Player::new(player_id, username);
-        table.players = (0..table.max_players).map(|_| player.clone()).collect();
+        table.players = (0..table.max_players())
+            .map(|_| player.clone().into())
+            .collect();
         let dealer_idx = 0;
         let mut game = Game::new(
-            table.id,
-            table.players.clone(),
+            table.id().clone(),
+            table
+                .players
+                .clone()
+                .into_iter()
+                .map(GamePlayer::from)
+                .collect(),
             dealer_idx,
-            table.small_blind,
-            table.big_blind,
+            table.small_blind(),
+            table.big_blind(),
         );
 
         // Advance from start -> preflop state and take the blinds
