@@ -2,26 +2,26 @@ use crate::*;
 use rs_poker::core::{Card, Hand};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-#[serde(tag = "type", content = "payload")]
+#[serde(tag = "messageType", content = "payload", rename_all = "camelCase")]
 pub enum ServerLobby {
     TableList(Vec<TableConfig>),
     LobbyError(String),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-#[serde(tag = "type", content = "payload")]
+#[serde(tag = "messageType", content = "payload", rename_all = "camelCase")]
 pub enum ServerRoomPayload {
-    Chat { from: PlayerId, message: String },
-    SitTable { player: Player, index: usize },
-    GameUpdate(GameEvent),
+    Chat {
+        from: PlayerId,
+        message: String,
+    },
+    SitTable {
+        player: Player,
+        index: usize,
+    },
     RoomError(String),
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-#[serde(tag = "type", content = "payload")]
-pub enum GameEvent {
     NewGame(PublicGameState),
-    StateUpdate(PublicGameState),
+    GameUpdate(PublicGameState),
     DealHand(Hand),
     CommunityCards {
         flop: (Card, Card, Card),
@@ -35,6 +35,7 @@ pub enum GameEvent {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct PublicGameState {
     pub id: GameId,
     pub players: Vec<Player>,
@@ -110,14 +111,14 @@ impl PokerMessage {
         let state = Self::public_game_state_from_game(new_game);
         Self::Server(Either::Room(RoomMessage {
             room_id,
-            payload: ServerRoomPayload::GameUpdate(GameEvent::NewGame(state)),
+            payload: ServerRoomPayload::NewGame(state),
         }))
     }
 
     pub fn deal_hand(room_id: RoomId, hand: Hand) -> Self {
         Self::Server(Either::Room(RoomMessage {
             room_id,
-            payload: ServerRoomPayload::GameUpdate(GameEvent::DealHand(hand)),
+            payload: ServerRoomPayload::DealHand(hand),
         }))
     }
 
@@ -129,7 +130,7 @@ impl PokerMessage {
     ) -> Self {
         Self::Server(Either::Room(RoomMessage {
             room_id,
-            payload: ServerRoomPayload::GameUpdate(GameEvent::CommunityCards { flop, turn, river }),
+            payload: ServerRoomPayload::CommunityCards { flop, turn, river },
         }))
     }
 
@@ -137,7 +138,7 @@ impl PokerMessage {
         let state_update = Self::public_game_state_from_game(game);
         Self::Server(Either::Room(RoomMessage {
             room_id,
-            payload: ServerRoomPayload::GameUpdate(GameEvent::StateUpdate(state_update)),
+            payload: ServerRoomPayload::GameUpdate(state_update),
         }))
     }
 }

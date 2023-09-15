@@ -1,28 +1,23 @@
 use crate::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-#[serde(tag = "type", content = "payload")]
+#[serde(tag = "messageType", content = "payload", rename_all = "camelCase")]
 pub enum ClientLobby {
     GetTables,
 }
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-#[serde(tag = "type", content = "payload")]
+#[serde(tag = "messageType", content = "payload", rename_all = "camelCase")]
 pub enum ClientRoomPayload {
     Subscribe,
     Chat(String),
     SitTable { chips: ChipInt },
-    PlayerAction(PlayerEvent),
+    Bet(ChipInt),
+    Fold,
     SitOutNextHand(bool),
     SitOutNextBigBlind(bool),
     WaitForBigBlind(bool),
     CheckFold(bool),
     CallAny(bool),
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-pub enum PlayerEvent {
-    Bet(ChipInt),
-    Fold,
 }
 
 impl PokerMessage {
@@ -54,14 +49,14 @@ impl PokerMessage {
     pub fn bet(room_id: RoomId, bet: ChipInt) -> Self {
         Self::Client(Either::Room(RoomMessage {
             room_id,
-            payload: ClientRoomPayload::PlayerAction(PlayerEvent::Bet(bet)),
+            payload: ClientRoomPayload::Bet(bet),
         }))
     }
 
     pub fn fold(room_id: RoomId) -> Self {
         Self::Client(Either::Room(RoomMessage {
             room_id,
-            payload: ClientRoomPayload::PlayerAction(PlayerEvent::Fold),
+            payload: ClientRoomPayload::Fold,
         }))
     }
 }

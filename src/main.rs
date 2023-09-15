@@ -225,7 +225,7 @@ mod tests {
                             msg,
                             PokerMessage::Server(Either::Room(RoomMessage {
                                 room_id,
-                                payload: ServerRoomPayload::GameUpdate(GameEvent::NewGame(
+                                payload: ServerRoomPayload::NewGame(
                                     PublicGameState {
                                         id,
                                         players,
@@ -240,7 +240,7 @@ mod tests {
                                         to_call,
                                         pot,
                                     }
-                                ))
+                                )
                             }))
                         if *expected_room_id == room_id && expected_dealer_idx == dealer_idx);
                     }
@@ -264,7 +264,7 @@ mod tests {
                             msg,
                             PokerMessage::Server(Either::Room(RoomMessage {
                                 room_id: received_room_id,
-                                payload: ServerRoomPayload::GameUpdate(GameEvent::DealHand(hand))
+                                payload: ServerRoomPayload::DealHand(hand)
                             }))
                         if *room_id == received_room_id);
                     }
@@ -289,7 +289,7 @@ mod tests {
                             msg,
                             PokerMessage::Server(Either::Room(RoomMessage {
                                 room_id: received_room_id,
-                                payload: ServerRoomPayload::GameUpdate(GameEvent::StateUpdate(
+                                payload: ServerRoomPayload::GameUpdate(
                                     PublicGameState {
                                         id,
                                         players,
@@ -304,7 +304,7 @@ mod tests {
                                         to_call,
                                         pot,
                                     }
-                                ))
+                               )
                             }))
                         if *room_id == received_room_id);
                     }

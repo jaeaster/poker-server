@@ -135,12 +135,8 @@ impl PlayerActor {
                 let table_player = self.player.clone();
                 room.sit_table(table_player).await
             }
-            ClientRoomPayload::PlayerAction(PlayerEvent::Bet(chips)) => {
-                room.bet(self.player.clone(), chips).await
-            }
-            ClientRoomPayload::PlayerAction(PlayerEvent::Fold) => {
-                room.fold(self.player.clone()).await
-            }
+            ClientRoomPayload::Bet(chips) => room.bet(self.player.clone(), chips).await,
+            ClientRoomPayload::Fold => room.fold(self.player.clone()).await,
 
             ClientRoomPayload::SitOutNextHand(value) => {
                 room.sit_out_next_hand(self.player.clone(), value).await

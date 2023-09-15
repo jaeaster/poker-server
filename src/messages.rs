@@ -21,6 +21,7 @@ pub enum PokerMessage {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct RoomMessage<RoomPayload> {
     pub room_id: RoomId,
 
