@@ -141,6 +141,21 @@ impl PlayerActor {
             ClientRoomPayload::PlayerAction(PlayerEvent::Fold) => {
                 room.fold(self.player.clone()).await
             }
+
+            ClientRoomPayload::SitOutNextHand(value) => {
+                room.sit_out_next_hand(self.player.clone(), value).await
+            }
+            ClientRoomPayload::SitOutNextBigBlind(value) => {
+                room.sit_out_next_big_blind(self.player.clone(), value)
+                    .await
+            }
+            ClientRoomPayload::WaitForBigBlind(value) => {
+                room.wait_for_big_blind(self.player.clone(), value).await
+            }
+            ClientRoomPayload::CheckFold(value) => {
+                room.check_fold(self.player.clone(), value).await
+            }
+            ClientRoomPayload::CallAny(value) => room.call_any(self.player.clone(), value).await,
         }
     }
 

@@ -12,6 +12,11 @@ pub enum ClientRoomPayload {
     Chat(String),
     SitTable { chips: ChipInt },
     PlayerAction(PlayerEvent),
+    SitOutNextHand(bool),
+    SitOutNextBigBlind(bool),
+    WaitForBigBlind(bool),
+    CheckFold(bool),
+    CallAny(bool),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]

@@ -15,8 +15,8 @@ pub struct Game {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GamePlayer {
     pub info: Player,
-    check_fold: bool,
-    call_any: bool,
+    pub check_fold: bool,
+    pub call_any: bool,
 }
 
 impl GamePlayer {

@@ -132,6 +132,32 @@ impl Table {
         }
     }
 
+    pub fn set_check_fold(&mut self, player: &Player, value: bool) -> Result<()> {
+        if let Some(game) = self.game_mut() {
+            if let Some(idx) = game.players.iter().position(|p| p.info.id == player.id) {
+                game.players.get_mut(idx).unwrap().check_fold = value;
+                Ok(())
+            } else {
+                bail!("Player not found")
+            }
+        } else {
+            bail!("Game is not active")
+        }
+    }
+
+    pub fn set_call_any(&mut self, player: &Player, value: bool) -> Result<()> {
+        if let Some(game) = self.game_mut() {
+            if let Some(idx) = game.players.iter().position(|p| p.info.id == player.id) {
+                game.players.get_mut(idx).unwrap().call_any = value;
+                Ok(())
+            } else {
+                bail!("Player not found")
+            }
+        } else {
+            bail!("Game is not active")
+        }
+    }
+
     pub fn start_new_game(&mut self) -> Result<()> {
         let players = self.get_players_for_next_game();
         if players.len() < self.min_players() {
@@ -160,6 +186,7 @@ impl Table {
             g.players.iter().map(|p| p.info.id.clone()).collect()
         });
 
+        // TODO: Filter players sitting out next big blind
         let players_from_last_game: Vec<_> = self
             .players
             .clone()

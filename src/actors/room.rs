@@ -29,6 +29,35 @@ enum RoomActorMessage {
         player: Player,
         respond_to: oneshot::Sender<Result<()>>,
     },
+    SitOutNextHand {
+        player: Player,
+        value: bool,
+        respond_to: oneshot::Sender<Result<()>>,
+    },
+
+    SitOutNextBigBlind {
+        player: Player,
+        value: bool,
+        respond_to: oneshot::Sender<Result<()>>,
+    },
+
+    WaitForBigBlind {
+        player: Player,
+        value: bool,
+        respond_to: oneshot::Sender<Result<()>>,
+    },
+
+    CheckFold {
+        player: Player,
+        value: bool,
+        respond_to: oneshot::Sender<Result<()>>,
+    },
+
+    CallAny {
+        player: Player,
+        value: bool,
+        respond_to: oneshot::Sender<Result<()>>,
+    },
 }
 
 #[derive(Clone)]
@@ -106,6 +135,57 @@ impl RoomHandle {
         let _ = self.sender.try_send(msg);
         recv.await.expect("Room task has been killed")
     }
+
+    pub async fn sit_out_next_hand(&self, player: Player, value: bool) -> Result<()> {
+        let (send, recv) = oneshot::channel();
+        let msg = RoomActorMessage::SitOutNextHand {
+            player,
+            value,
+            respond_to: send,
+        };
+        let _ = self.sender.try_send(msg);
+        recv.await.expect("Room task has been killed")
+    }
+    pub async fn sit_out_next_big_blind(&self, player: Player, value: bool) -> Result<()> {
+        let (send, recv) = oneshot::channel();
+        let msg = RoomActorMessage::SitOutNextBigBlind {
+            player,
+            value,
+            respond_to: send,
+        };
+        let _ = self.sender.try_send(msg);
+        recv.await.expect("Room task has been killed")
+    }
+    pub async fn wait_for_big_blind(&self, player: Player, value: bool) -> Result<()> {
+        let (send, recv) = oneshot::channel();
+        let msg = RoomActorMessage::WaitForBigBlind {
+            player,
+            value,
+            respond_to: send,
+        };
+        let _ = self.sender.try_send(msg);
+        recv.await.expect("Room task has been killed")
+    }
+    pub async fn check_fold(&self, player: Player, value: bool) -> Result<()> {
+        let (send, recv) = oneshot::channel();
+        let msg = RoomActorMessage::CheckFold {
+            player,
+            value,
+            respond_to: send,
+        };
+        let _ = self.sender.try_send(msg);
+        recv.await.expect("Room task has been killed")
+    }
+    pub async fn call_any(&self, player: Player, value: bool) -> Result<()> {
+        let (send, recv) = oneshot::channel();
+        let msg = RoomActorMessage::CallAny {
+            player,
+            value,
+            respond_to: send,
+        };
+        let _ = self.sender.try_send(msg);
+        recv.await.expect("Room task has been killed")
+    }
 }
 
 struct Room {
@@ -166,6 +246,44 @@ impl Room {
             }
             RoomActorMessage::Fold { player, respond_to } => {
                 let _ = respond_to.send(self.handle_fold(player).await);
+            }
+            RoomActorMessage::SitOutNextHand {
+                player,
+                value,
+                respond_to,
+            } => {
+                let _ = respond_to.send(self.table.set_sit_out_next_hand(&player, value));
+            }
+
+            RoomActorMessage::SitOutNextBigBlind {
+                player,
+                value,
+                respond_to,
+            } => {
+                let _ = respond_to.send(self.table.set_sit_out_next_big_blind(&player, value));
+            }
+
+            RoomActorMessage::WaitForBigBlind {
+                player,
+                value,
+                respond_to,
+            } => {
+                let _ = respond_to.send(self.table.set_wait_for_big_blind(&player, value));
+            }
+
+            RoomActorMessage::CheckFold {
+                player,
+                value,
+                respond_to,
+            } => {
+                let _ = respond_to.send(self.table.set_check_fold(&player, value));
+            }
+            RoomActorMessage::CallAny {
+                player,
+                value,
+                respond_to,
+            } => {
+                let _ = respond_to.send(self.table.set_call_any(&player, value));
             }
         }
     }
