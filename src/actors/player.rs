@@ -97,7 +97,7 @@ impl PlayerActor {
 
     async fn handle_room_message(
         &mut self,
-        ClientRoom { room_id, payload }: ClientRoom,
+        RoomMessage { room_id, payload }: RoomMessage<ClientRoomPayload>,
     ) -> Result<()> {
         debug!(room = room_id, "Handling message for room: {:?}", payload);
 

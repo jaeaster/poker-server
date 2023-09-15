@@ -2,61 +2,10 @@ use crate::*;
 use rs_poker::core::{Card, Hand};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-#[serde(untagged)]
-pub enum Either<C, S> {
-    Lobby(C),
-    Room(S),
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-#[serde(untagged)]
-pub enum PokerMessage {
-    Client(Either<ClientLobby, ClientRoom>),
-    Server(Either<ServerLobby, ServerRoom>),
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-#[serde(tag = "type", content = "payload")]
-pub enum ClientLobby {
-    GetTables,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-pub struct ClientRoom {
-    pub room_id: RoomId,
-
-    #[serde(flatten)]
-    pub payload: ClientRoomPayload,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-#[serde(tag = "type", content = "payload")]
-pub enum ClientRoomPayload {
-    Subscribe,
-    Chat(String),
-    SitTable { chips: ChipInt },
-    PlayerAction(PlayerEvent),
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-pub enum PlayerEvent {
-    Bet(ChipInt),
-    Fold,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 #[serde(tag = "type", content = "payload")]
 pub enum ServerLobby {
     TableList(Vec<TableConfig>),
     LobbyError(String),
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-pub struct ServerRoom {
-    pub room_id: RoomId,
-
-    #[serde(flatten)]
-    pub payload: ServerRoomPayload,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
@@ -131,52 +80,27 @@ impl PokerMessage {
         Self::Server(Either::Lobby(ServerLobby::LobbyError(err)))
     }
 
-    pub fn get_tables() -> Self {
-        Self::Client(Either::Lobby(ClientLobby::GetTables))
-    }
-
     pub fn table_list(tables: Vec<TableConfig>) -> Self {
         Self::Server(Either::Lobby(ServerLobby::TableList(tables)))
     }
 
     // Public methods for Room
     pub fn error_room(room_id: RoomId, err: String) -> Self {
-        Self::Server(Either::Room(ServerRoom {
+        Self::Server(Either::Room(RoomMessage {
             room_id,
             payload: ServerRoomPayload::RoomError(err),
         }))
     }
 
-    pub fn subscribe_room(room_id: RoomId) -> Self {
-        Self::Client(Either::Room(ClientRoom {
-            room_id,
-            payload: ClientRoomPayload::Subscribe,
-        }))
-    }
-
-    pub fn chat(room_id: RoomId, message: String) -> Self {
-        Self::Client(Either::Room(ClientRoom {
-            room_id,
-            payload: ClientRoomPayload::Chat(message),
-        }))
-    }
-
     pub fn chat_broadcast(room_id: RoomId, from: PlayerId, message: String) -> Self {
-        Self::Server(Either::Room(ServerRoom {
+        Self::Server(Either::Room(RoomMessage {
             room_id,
             payload: ServerRoomPayload::Chat { from, message },
         }))
     }
 
-    pub fn sit_table(room_id: RoomId, chips: ChipInt) -> Self {
-        Self::Client(Either::Room(ClientRoom {
-            room_id,
-            payload: ClientRoomPayload::SitTable { chips },
-        }))
-    }
-
     pub fn sit_table_broadcast(room_id: RoomId, player: Player, index: usize) -> Self {
-        Self::Server(Either::Room(ServerRoom {
+        Self::Server(Either::Room(RoomMessage {
             room_id,
             payload: ServerRoomPayload::SitTable { player, index },
         }))
@@ -184,14 +108,14 @@ impl PokerMessage {
 
     pub fn new_game(room_id: RoomId, new_game: &Game) -> Self {
         let state = Self::public_game_state_from_game(new_game);
-        Self::Server(Either::Room(ServerRoom {
+        Self::Server(Either::Room(RoomMessage {
             room_id,
             payload: ServerRoomPayload::GameUpdate(GameEvent::NewGame(state)),
         }))
     }
 
     pub fn deal_hand(room_id: RoomId, hand: Hand) -> Self {
-        Self::Server(Either::Room(ServerRoom {
+        Self::Server(Either::Room(RoomMessage {
             room_id,
             payload: ServerRoomPayload::GameUpdate(GameEvent::DealHand(hand)),
         }))
@@ -203,29 +127,15 @@ impl PokerMessage {
         turn: Option<Card>,
         river: Option<Card>,
     ) -> Self {
-        Self::Server(Either::Room(ServerRoom {
+        Self::Server(Either::Room(RoomMessage {
             room_id,
             payload: ServerRoomPayload::GameUpdate(GameEvent::CommunityCards { flop, turn, river }),
         }))
     }
 
-    pub fn bet(room_id: RoomId, bet: ChipInt) -> Self {
-        Self::Client(Either::Room(ClientRoom {
-            room_id,
-            payload: ClientRoomPayload::PlayerAction(PlayerEvent::Bet(bet)),
-        }))
-    }
-
-    pub fn fold(room_id: RoomId) -> Self {
-        Self::Client(Either::Room(ClientRoom {
-            room_id,
-            payload: ClientRoomPayload::PlayerAction(PlayerEvent::Fold),
-        }))
-    }
-
     pub fn game_update(room_id: RoomId, game: &Game) -> Self {
         let state_update = Self::public_game_state_from_game(game);
-        Self::Server(Either::Room(ServerRoom {
+        Self::Server(Either::Room(RoomMessage {
             room_id,
             payload: ServerRoomPayload::GameUpdate(GameEvent::StateUpdate(state_update)),
         }))

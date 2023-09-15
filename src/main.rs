@@ -8,12 +8,14 @@ use std::env::var;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod actors;
+mod messages;
 mod models;
 mod server;
 
 pub use actors::*;
 pub use alloy_primitives::Address;
 pub use eyre::{bail, eyre, Result};
+pub use messages::*;
 pub use models::*;
 pub use serde::{Deserialize, Serialize};
 pub use server::*;
@@ -221,7 +223,7 @@ mod tests {
                         debug!(msg = ?msg);
                         assert_matches!(
                             msg,
-                            PokerMessage::Server(Either::Room(ServerRoom {
+                            PokerMessage::Server(Either::Room(RoomMessage {
                                 room_id,
                                 payload: ServerRoomPayload::GameUpdate(GameEvent::NewGame(
                                     PublicGameState {
@@ -260,7 +262,7 @@ mod tests {
                         debug!(msg = ?msg);
                         assert_matches!(
                             msg,
-                            PokerMessage::Server(Either::Room(ServerRoom {
+                            PokerMessage::Server(Either::Room(RoomMessage {
                                 room_id: received_room_id,
                                 payload: ServerRoomPayload::GameUpdate(GameEvent::DealHand(hand))
                             }))
@@ -285,7 +287,7 @@ mod tests {
                         let five = "5".to_string();
                         assert_matches!(
                             msg,
-                            PokerMessage::Server(Either::Room(ServerRoom {
+                            PokerMessage::Server(Either::Room(RoomMessage {
                                 room_id: received_room_id,
                                 payload: ServerRoomPayload::GameUpdate(GameEvent::StateUpdate(
                                     PublicGameState {
