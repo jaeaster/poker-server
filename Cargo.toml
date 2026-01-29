@@ -1,7 +1,14 @@
 [package]
-name = "poker-reloaded"
+name = "poker-server"
 version = "0.1.0"
 edition = "2021"
+authors = ["Jonathan Easterman <jonathaneasterman@gmail.com>"]
+description = "A WebSocket-based Texas Hold'em poker server built with Rust, Tokio, and Axum"
+license = "GPL-3.0"
+repository = "https://github.com/jaeaster/poker-server"
+readme = "README.md"
+keywords = ["poker", "websocket", "tokio", "axum", "game-server"]
+categories = ["games", "network-programming"]
 
 [dependencies]
 alloy-primitives = "0.3.3"

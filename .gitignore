@@ -1,1 +1,21 @@
-/target
+# Rust
+/target/
+**/*.rs.bk
+
+# Environment (contains secrets)
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Logs
+*.log

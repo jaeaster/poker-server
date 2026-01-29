@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn test_iron_session() -> Result<()> {
-        let session_secret = "asdjhashjdasjhdashjkdhjkasdjkhsdfghsdf";
+        let session_secret = "test-secret-do-not-use-in-production";
         let default_session = Session::default();
         let cookie = default_session.to_cookie(session_secret);
 
