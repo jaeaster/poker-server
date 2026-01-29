@@ -23,6 +23,7 @@ pub struct TableConfig {
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 pub struct TablePlayer {
     pub info: Player,
+    pub has_paid_big_blind: bool,
     pub wait_for_big_blind: bool,
     pub sit_out_next_hand: bool,
     pub sit_out_next_big_blind: bool,
@@ -32,6 +33,7 @@ impl TablePlayer {
     fn new(player: Player) -> Self {
         Self {
             info: player,
+            has_paid_big_blind: false,
             wait_for_big_blind: true,
             sit_out_next_hand: false,
             sit_out_next_big_blind: false,
@@ -163,22 +165,39 @@ impl Table {
         if players.len() < self.min_players() {
             bail!("Not enough players to start game");
         }
+        let dealer_idx = self.get_next_dealer_idx(&players);
         let new_game = Game::new(
             self.id().clone(),
             players,
-            self.get_next_dealer_idx(),
+            dealer_idx,
             self.small_blind(),
             self.big_blind(),
         );
 
         self.game = Some(new_game);
+
+        let big_blind_idx = self.get_big_blind_idx();
+        self.players
+            .get_mut(big_blind_idx)
+            .unwrap()
+            .has_paid_big_blind = true;
         Ok(())
     }
 
-    fn get_next_dealer_idx(&self) -> usize {
+    fn get_next_dealer_idx(&self, next_players: &[GamePlayer]) -> usize {
         self.game
             .as_ref()
-            .map_or(0, |game| (game.state.dealer_idx + 1) % self.num_players())
+            .map_or(0, |game| (game.state.dealer_idx + 1) % next_players.len())
+    }
+
+    fn get_dealer_idx(&self) -> usize {
+        self.game.as_ref().map_or(0, |game| game.state.dealer_idx)
+    }
+
+    fn get_big_blind_idx(&self) -> usize {
+        let dealer_idx = self.get_dealer_idx();
+        let current_players = self.game.as_ref().unwrap().players.as_slice();
+        (dealer_idx + 2) % current_players.len()
     }
 
     fn get_players_for_next_game(&self) -> Vec<GamePlayer> {
